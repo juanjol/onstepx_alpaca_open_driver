@@ -354,7 +354,7 @@ public sealed class OnStepXConnection : IAsyncDisposable
         ConnectionSettings connection,
         CancellationToken cancellationToken)
     {
-        var discovery = new PortDiscovery();
+        var discovery = new PortDiscovery(logger: _logger);
 
         var options = new PortDiscoveryOptions
         {

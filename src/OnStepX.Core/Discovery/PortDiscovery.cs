@@ -111,7 +111,7 @@ public sealed class PortDiscovery
     public PortDiscovery(
         ISerialPortEnumerator? enumerator = null,
         Func<string, int, ITransport>? transportFactory = null,
-        ILogger<PortDiscovery>? logger = null)
+        ILogger? logger = null)
     {
         _enumerator = enumerator ?? SerialPortEnumerators.CreateDefault();
         _transportFactory = transportFactory
@@ -326,8 +326,10 @@ public sealed class PortDiscovery
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
             // Opening can also hang on a problematic port, so the deadline
-            // covers the opening, not just the conversation.
-            timeout.CancelAfter(options.ProbeTimeout + options.ProbeTimeout);
+            // covers the opening, not just the conversation. Widened to fit
+            // one retry per command (see MaxRetries below): worst case is
+            // open plus two full timeouts for GVP plus two for GVN.
+            timeout.CancelAfter(options.ProbeTimeout + (options.ProbeTimeout * 4));
 
             await transport.OpenAsync(timeout.Token).ConfigureAwait(false);
 
@@ -336,9 +338,13 @@ public sealed class PortDiscovery
                 UseErrorCorrection = options.UseErrorCorrection,
                 Timeout = options.ProbeTimeout,
 
-                // No retries: here silence is the answer, it means this is
-                // not the right port.
-                MaxRetries = 0,
+                // One retry, not zero: on boards that reset on DTR/RTS
+                // assertion (common on ESP32/CH340), opening the port can
+                // still be mid boot when the first command is written, so
+                // it is silently dropped. A single retry is enough to land
+                // a second write after boot without meaningfully slowing
+                // down the case where the port truly is not a match.
+                MaxRetries = 1,
             });
 
             // The transport becomes owned by the channel.
