@@ -3,11 +3,11 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>OnStepX.Devices</RootNamespace>
-    <Description>Implementacion de las interfaces ASCOM (ITelescopeV4, IFocuserV4, IRotatorV4, IObservingConditionsV2) sobre OnStepX.Core.</Description>
+    <Description>Implementation of the ASCOM interfaces (ITelescopeV4, IFocuserV4, IRotatorV4, IObservingConditionsV2) over OnStepX.Core.</Description>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- ASCOM.Common.Components trae ASCOM.Common.DeviceInterfaces. -->
+    <!-- ASCOM.Common.Components brings in ASCOM.Common.DeviceInterfaces. -->
     <PackageReference Include="ASCOM.Common.Components" Version="3.1.0" />
     <PackageReference Include="ASCOM.Exception.Library" Version="7.1.2" />
     <PackageReference Include="ASCOM.Tools" Version="3.1.0" />

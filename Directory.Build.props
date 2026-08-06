@@ -1,7 +1,7 @@
 <Project>
 
   <PropertyGroup>
-    <!-- Version compartida por todos los proyectos y por el instalador. -->
+    <!-- Version shared by all projects and by the installer. -->
     <VersionPrefix>0.1.0</VersionPrefix>
     <Authors>Juanjo Lopez</Authors>
     <Product>OnStepX ASCOM</Product>
@@ -22,9 +22,9 @@
   </PropertyGroup>
 
   <!--
-    El shim COM es net48 y solo compila en Windows. En Linux se usa
-    OnStepX.CrossPlatform.slnf, que lo excluye. Esta propiedad permite
-    que los scripts sepan en que plataforma estan.
+    The COM shim is net48 and only builds on Windows. Linux uses
+    OnStepX.CrossPlatform.slnf, which excludes it. This property lets
+    scripts know which platform they are on.
   -->
   <PropertyGroup Condition="'$(OS)' == 'Windows_NT'">
     <OnStepXCanBuildComShim>true</OnStepXCanBuildComShim>

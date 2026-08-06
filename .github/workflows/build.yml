@@ -15,8 +15,8 @@ env:
 
 jobs:
 
-  # Compila y testea todo lo multiplataforma, y publica los binarios de
-  # Linux y Raspberry Pi. El shim COM queda fuera porque es net48.
+  # Builds and tests everything cross platform, and publishes the
+  # Linux and Raspberry Pi binaries. The COM shim is left out because it is net48.
   linux:
     runs-on: ubuntu-latest
     steps:
@@ -62,8 +62,8 @@ jobs:
           name: test-results
           path: artifacts/test-results/
 
-  # Compila la solucion completa, shim COM net48 incluido, y genera el
-  # instalable. Inno Setup 6 ya viene en la imagen windows-latest.
+  # Builds the full solution, net48 COM shim included, and generates the
+  # installer. Inno Setup 6 already comes with the windows-latest image.
   windows:
     runs-on: windows-latest
     steps:
@@ -76,18 +76,18 @@ jobs:
       - name: Restore
         run: dotnet restore OnStepX.Ascom.sln
 
-      - name: Build solucion completa
+      - name: Build full solution
         run: dotnet build OnStepX.Ascom.sln -c Release --no-restore
 
       - name: Test
         run: dotnet test tests/OnStepX.Core.Tests -c Release --no-build
 
-      - name: Publish servidor Alpaca win-x64
+      - name: Publish Alpaca server win-x64
         run: dotnet publish src/OnStepX.AlpacaServer -c Release -r win-x64 --self-contained true -o artifacts/win-x64
 
-      # El .iss llega en la fase 11. Hasta entonces este paso se salta
-      # en lugar de romper el CI.
-      - name: Comprobar si hay instalador
+      # The .iss arrives in phase 11. Until then this step is skipped
+      # instead of breaking CI.
+      - name: Check for installer
         id: installer
         shell: bash
         run: |
@@ -95,10 +95,10 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "installer/OnStepX.Ascom.iss todavia no existe, se omite ISCC"
+            echo "installer/OnStepX.Ascom.iss does not exist yet, skipping ISCC"
           fi
 
-      - name: Construir instalador con Inno Setup
+      - name: Build installer with Inno Setup
         if: steps.installer.outputs.present == 'true'
         run: iscc /Qp installer\OnStepX.Ascom.iss
 
@@ -113,7 +113,7 @@ jobs:
           name: windows-installer
           path: installer/Output/
 
-  # Publica en release al empujar un tag vX.Y.Z
+  # Publishes a release when a vX.Y.Z tag is pushed
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [linux, windows]

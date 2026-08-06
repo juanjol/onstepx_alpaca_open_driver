@@ -138,7 +138,7 @@ public class PortRankingTests
         SerialPortInfo[] ports = [Port("COM9"), Port("COM4"), Port("COM7")];
 
         IReadOnlyList<SerialPortInfo> first = PortRanking.Prioritise(ports);
-        IReadOnlyList<SerialPortInfo> second = PortRanking.Prioritise(ports.Reverse());
+        IReadOnlyList<SerialPortInfo> second = PortRanking.Prioritise(Enumerable.Reverse(ports));
 
         Assert.Equal(
             first.Select(p => p.PortName),

@@ -191,7 +191,7 @@ public sealed class LinuxSerialPortEnumeratorTests : IDisposable
         string link = Path.Combine(
             _devSerialById, "usb-Silicon_Labs_CP2102_USB_to_UART_Bridge-if00-port0");
 
-        Directory.CreateSymbolicLink(link, "/dev/ttyUSB0");
+        File.CreateSymbolicLink(link, "/dev/ttyUSB0");
 
         SerialPortInfo port = Assert.Single(Enumerator("/dev/ttyUSB0").Enumerate());
 
@@ -209,7 +209,7 @@ public sealed class LinuxSerialPortEnumeratorTests : IDisposable
     {
         CreateUsbSerialDevice("ttyUSB0", "10c4", "ea60", "Silicon Labs", "CP2102");
 
-        Directory.CreateSymbolicLink(
+        File.CreateSymbolicLink(
             Path.Combine(_devSerialById, "usb-Other_Name-if00"),
             "/dev/ttyUSB0");
 

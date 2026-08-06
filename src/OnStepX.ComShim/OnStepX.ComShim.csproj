@@ -2,13 +2,13 @@
 
   <PropertyGroup>
     <!--
-      net48 a proposito, siguiendo a OmniSimCOMProxy del repo oficial
-      ASCOM.Alpaca.Simulators. Verificado: ASCOM.Alpaca.Components 3.1.0
-      publica netstandard2.0, que net48 consume, asi que este shim puede
-      usar el cliente Alpaca oficial sin reimplementar nada.
+      net48 on purpose, following OmniSimCOMProxy from the official
+      ASCOM.Alpaca.Simulators repo. Verified: ASCOM.Alpaca.Components 3.1.0
+      publishes netstandard2.0, which net48 consumes, so this shim can
+      use the official Alpaca client without reimplementing anything.
 
-      Solo compila en Windows. En Linux usa OnStepX.CrossPlatform.slnf,
-      que excluye este proyecto.
+      Only builds on Windows. Linux uses OnStepX.CrossPlatform.slnf,
+      which excludes this project.
     -->
     <TargetFramework>net48</TargetFramework>
     <OutputType>WinExe</OutputType>
@@ -19,7 +19,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <ComVisible>false</ComVisible>
-    <Description>Local Server COM que expone los dispositivos OnStepX del servidor Alpaca a clientes solo COM. No habla con la montura: es cliente Alpaca de localhost.</Description>
+    <Description>Local Server COM that exposes the Alpaca server's OnStepX devices to COM-only clients. It does not talk to the mount: it is a localhost Alpaca client.</Description>
   </PropertyGroup>
 
   <ItemGroup>

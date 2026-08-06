@@ -178,7 +178,11 @@ public sealed partial class LinuxSerialPortEnumerator : ISerialPortEnumerator
                 string resolved = Path.GetFullPath(
                     Path.Combine(_devSerialById, target));
 
-                if (string.Equals(resolved, portName, StringComparison.Ordinal))
+                // portName must go through the same normalization as resolved,
+                // or the comparison never matches when GetFullPath rewrites a
+                // rootless absolute path (like the tests' fake "/dev/ttyUSB0")
+                // by prefixing it with the current drive.
+                if (string.Equals(resolved, Path.GetFullPath(portName), StringComparison.Ordinal))
                 {
                     // Names look like
                     // usb-Silicon_Labs_CP2102_USB_to_UART-if00-port0

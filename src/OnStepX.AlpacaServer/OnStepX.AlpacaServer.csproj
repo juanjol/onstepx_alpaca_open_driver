@@ -6,22 +6,22 @@
     <AssemblyName>OnStepX.AlpacaServer</AssemblyName>
     <OutputType>Exe</OutputType>
     <UserSecretsId>onstepx-alpaca-server</UserSecretsId>
-    <Description>Servidor ASCOM Alpaca para OnStepX: API REST, descubrimiento UDP y UI de configuracion en Blazor.</Description>
+    <Description>ASCOM Alpaca server for OnStepX: REST API, UDP discovery and Blazor configuration UI.</Description>
   </PropertyGroup>
 
   <ItemGroup>
     <!--
-      ASCOM.Alpaca.Razor aporta toda la superficie REST de Alpaca
+      ASCOM.Alpaca.Razor provides the whole Alpaca REST surface
       (TelescopeController, FocuserController, RotatorController,
-      ObservingConditionsController), el ManagementController, el
-      DiscoveryManager UDP y el DeviceManager de registro.
+      ObservingConditionsController), the ManagementController, the
+      UDP DiscoveryManager and the registration DeviceManager.
 
-      Version fijada a proposito: este paquete NO tiene release estable,
-      solo 0.5.0-alpha02 y 0.6.0-alpha02. Depende de librerias estables
-      (ASCOM.Alpaca.Device 3.0.0, ASCOM.Common.Components 3.0.0,
-      ASCOM.Exception.Library 7.1.2, ASCOM.Tools 3.0.0) y lo mantiene el
-      propio ASCOM Initiative, que lo usa en ASCOM.Alpaca.Simulators.
-      No actualizar sin comprobar antes que ConformU sigue pasando.
+      Version pinned on purpose: this package has NO stable release,
+      only 0.5.0-alpha02 and 0.6.0-alpha02. It depends on stable
+      libraries (ASCOM.Alpaca.Device 3.0.0, ASCOM.Common.Components 3.0.0,
+      ASCOM.Exception.Library 7.1.2, ASCOM.Tools 3.0.0) and is maintained by
+      the ASCOM Initiative itself, which uses it in ASCOM.Alpaca.Simulators.
+      Do not update without first checking that ConformU still passes.
     -->
     <PackageReference Include="ASCOM.Alpaca.Razor" Version="0.6.0-alpha02" />
     <PackageReference Include="ASCOM.Alpaca.Device" Version="3.1.0" />
@@ -31,8 +31,8 @@
 
   <ItemGroup>
     <!--
-      Alojamiento como servicio. El mismo ejecutable sirve para consola, bandeja,
-      servicio de Windows y unidad systemd, seleccionable en el instalador.
+      Hosting as a service. The same executable serves as console, tray,
+      Windows service and systemd unit, selectable in the installer.
     -->
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="8.0.1" />
