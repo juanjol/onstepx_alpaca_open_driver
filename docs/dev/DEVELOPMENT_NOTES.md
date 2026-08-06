@@ -5,7 +5,7 @@ before changing anything in the protocol or device layers.
 
 ## Current state
 
-Phases 0 to 8 are complete. All four ASCOM devices are implemented and **pass Conform
+Phases 0 to 11 are complete. All four ASCOM devices are implemented and **pass Conform
 Universal with zero issues** against the built in simulator.
 
 | Device | Interface | Conform |
@@ -15,18 +15,26 @@ Universal with zero issues** against the built in simulator.
 | Rotator | `IRotatorV4` | 0 issues |
 | ObservingConditions | `IObservingConditionsV2` | 0 issues |
 
-461 unit tests pass on Linux. The full solution, including the `net48` COM shim, builds
-on Linux.
+506 unit tests pass on Linux. The full solution, including the `net48` COM shim, builds
+on Windows CI; the Linux build uses `OnStepX.CrossPlatform.slnf`, which excludes the shim.
+
+A first beta, `v0.1.0-beta.1`, is published on the
+[releases page](https://github.com/juanjol/onstepx_alpaca_open_driver/releases), with a
+Windows installer and Linux and Raspberry Pi tarballs. Tray icon mode
+(`H.NotifyIcon`), the Windows service and systemd hosting, the COM local server, and the
+Inno Setup installer are all implemented and confirmed working on real Windows CI. What
+is still missing is real hardware time: everything so far has had far more hours against
+the built in simulator than against a real mount under a real sky.
 
 ### Still to do
 
-- **Phase 9**: tray icon with `H.NotifyIcon`, Windows service via `UseWindowsService`,
-  systemd via `UseSystemd`. Selectable in the installer.
-- **Phase 10**: COM local server. `net48` target is already validated against the
-  required packages. Read `ASCOM.COM.LocalServer` and `OmniSimCOMProxy` in
-  `ASCOMInitiative/ASCOM.Alpaca.Simulators` before deciding the registration mechanism.
-- **Phase 11**: Inno Setup installer, `linux-x64` and `linux-arm64` packages, release
-  publishing.
+- A manual install and uninstall pass on real Windows: service registration, COM
+  activation from an actual COM client (the ASCOM Chooser, PHD2, or similar), and
+  confirming the uninstaller cleans up completely.
+- Authentication support in the COM shim (`src/OnStepX.ComShim/Config/AlpacaEndpoint.cs`
+  only reads the port today, not credentials, so a server with `useAuthentication` on
+  will refuse the shim's connections).
+- Real hardware validation beyond the simulator.
 
 ## Environment
 
@@ -253,9 +261,9 @@ rather than convenient:
 - Comments explain why, not what. Several document firmware quirks or bugs that were fixed;
   keep that reasoning.
 - Do not commit the `.claude` directory or `CLAUDE.md`.
-- `docs/COMMAND_REFERENCE.md` is the authoritative command set, taken from the OnStepX
-  source tree. `docs/ONSTEP_WIKI_PROTOCOL.txt` documents classic OnStep and disagrees with
-  it in places, notably the 40 character command limit; the former wins.
-- `docs/SETUP_UI_CHECKLIST.md` is the field by field record of what the setup pages have to
+- `docs/dev/COMMAND_REFERENCE.md` is the authoritative command set, taken from the OnStepX
+  source tree. `docs/dev/ONSTEP_WIKI_PROTOCOL.txt` documents classic OnStep and disagrees
+  with it in places, notably the 40 character command limit; the former wins.
+- `docs/dev/SETUP_UI_CHECKLIST.md` is the field by field record of what the setup pages have to
   cover, taken from the two old WinForms dialogs plus the new OnStepX sections. It is the
   acceptance criterion for phase 8 and the place to look before adding a field.

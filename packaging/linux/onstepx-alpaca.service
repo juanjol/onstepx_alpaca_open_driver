@@ -1,0 +1,60 @@
+# OnStepX ASCOM Alpaca server, as a systemd service.
+#
+# Install with:
+#   sudo cp onstepx-alpaca.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now onstepx-alpaca
+#
+# See docs/INSTALLING.md for the one time setup this expects: the onstepx
+# user, its membership of the dialout group, and the binaries unpacked
+# under /opt/onstepx-alpaca.
+
+[Unit]
+Description=OnStepX ASCOM Alpaca server
+Documentation=https://github.com/juanjol/onstepx_alpaca_open_driver
+# The server binds an HTTP port and answers Alpaca discovery over UDP, so
+# it should not come up before the network stack does.
+After=network.target
+Wants=network.target
+
+[Service]
+# Type=notify is what the Microsoft.Extensions.Hosting.Systemd integration
+# is built for. Program.cs calls AddSystemd() when it runs with --service on
+# a non Windows machine, and that sends READY=1 over NOTIFY_SOCKET once the
+# host has finished starting, then STOPPING=1 on shutdown. With Type=simple
+# systemd would call the unit active the instant the process forked, before
+# the port was listening.
+#
+# Note that the integration sends no watchdog pings, so do not add
+# WatchdogSec here: systemd would kill a perfectly healthy server the first
+# time the timer expired.
+Type=notify
+
+# A dedicated account, not root. The dialout group is what lets it open
+# /dev/ttyUSB0 and friends. Asking systemd for the group here means the unit
+# keeps working even on a machine where the account was created without it,
+# and adding the account to dialout as well (see docs/INSTALLING.md) is what
+# makes "sudo -u onstepx" behave the same way when testing by hand.
+#
+# There is deliberately no Group= line: the account's own primary group,
+# whatever the distribution's useradd gave it, is the right answer, and
+# naming one here would only add a way for the unit to fail to start.
+User=onstepx
+SupplementaryGroups=dialout
+
+WorkingDirectory=/opt/onstepx-alpaca
+ExecStart=/opt/onstepx-alpaca/OnStepX.AlpacaServer --service
+
+# Serial links and USB adapters fail in ways that a restart fixes. The delay
+# keeps a genuinely broken configuration from spinning at full speed.
+Restart=on-failure
+RestartSec=10
+
+# Logs go to the journal. The server writes to stdout and has no log file of
+# its own, so this is where its output ends up.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=onstepx-alpaca
+
+[Install]
+WantedBy=multi-user.target

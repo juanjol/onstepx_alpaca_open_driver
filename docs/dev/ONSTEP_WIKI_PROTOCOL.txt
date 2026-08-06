@@ -13,7 +13,7 @@ This page documents CLASSIC OnStep, not OnStepX. There are real divergences:
     at bufferSize - 2.
   * It does not cover the more recent OnStepX families.
 
-For OnStepX, docs/COMMAND_REFERENCE.md rules, which is derived from the
+For OnStepX, docs/dev/COMMAND_REFERENCE.md rules, which is derived from the
 firmware's current code. This copy is kept because it explains in prose
 the reasoning behind several commands, something the generated table does
 not do.

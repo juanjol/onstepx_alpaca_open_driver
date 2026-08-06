@@ -9,7 +9,22 @@ speak COM.
 
 ## Status
 
-Under construction. Phase 0 (scaffolding and CI) completed.
+A first beta is published, `v0.1.0-beta.1`, with a Windows installer and
+Linux and Raspberry Pi packages on the
+[releases page](https://github.com/juanjol/onstepx_alpaca_open_driver/releases).
+It is still a beta: it has had far more hours against the built in simulator
+than against real hardware under a real sky, so treat it accordingly and
+report what breaks.
+
+## Getting started
+
+* **[docs/INSTALLING.md](docs/INSTALLING.md)** covers installing on Windows
+  with the installer, and on Linux or a Raspberry Pi with the tarball and the
+  systemd unit.
+* **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)** covers day to day use: finding
+  the mount, what each setup page does, connecting an Alpaca client such as
+  NINA or a COM only client such as PHD2, and where to look when something
+  does not work.
 
 ## Devices
 
@@ -50,20 +65,14 @@ shim, or ASCOM Platform 7's Alpaca aware Chooser.
   compensation, backlash, goto speed, home, park, PEC, buzzer and diagnostics.
 * **Exportable configuration** to JSON, portable between installations.
 
-## Structure
+## Development
 
-```
-src/OnStepX.Core          Extended LX200 protocol, transports, autodiscovery
-src/OnStepX.Devices       Implementation of the ASCOM interfaces
-src/OnStepX.AlpacaServer  Alpaca server, REST API and configuration UI
-src/OnStepX.ComShim       Local Server COM (net48, Windows only)
-tests/OnStepX.Core.Tests  Protocol tests, run on any platform
-installer                 Inno Setup for Windows
-packaging/linux           systemd unit
-docs/COMMAND_REFERENCE.md Reference copy of the firmware's command set
-```
+Start with [docs/dev/DEVELOPMENT_NOTES.md](docs/dev/DEVELOPMENT_NOTES.md):
+the state of the work, the decisions behind it, and the firmware and ASCOM
+traps that cost real time. Read it before changing anything in the protocol or
+device layers.
 
-## Build
+### Build
 
 The .NET 8 SDK is required.
 
@@ -80,10 +89,35 @@ On Windows, the full solution including the shim:
 dotnet build OnStepX.Ascom.sln
 ```
 
+### Structure
+
+```
+src/OnStepX.Core             Extended LX200 protocol, transports, autodiscovery
+src/OnStepX.Devices          Implementation of the ASCOM interfaces
+src/OnStepX.AlpacaServer     Alpaca server, REST API and configuration UI
+src/OnStepX.ComShim          Local Server COM (net48, Windows only)
+tests/OnStepX.Core.Tests     Protocol tests, run on any platform
+installer                    Inno Setup for Windows
+packaging/linux              systemd unit for the Alpaca server
+docs/INSTALLING.md           Installation guide, both platforms
+docs/USER_GUIDE.md           Day to day use
+docs/dev/                    Developer documentation, see below
+```
+
+`docs/dev/` holds the material only a developer needs:
+
+```
+DEVELOPMENT_NOTES.md      State of the work, decisions, and the traps
+COMMAND_REFERENCE.md      Reference copy of the firmware's command set
+ONSTEP_WIKI_PROTOCOL.txt  Classic OnStep protocol, for the prose it explains
+SETUP_UI_CHECKLIST.md     Field by field record of what the setup pages cover
+```
+
 ## License
 
 GPL-3.0-only. See [LICENSE](LICENSE).
 
 This project does not incorporate code from OnStepX nor from other ASCOM
-drivers for OnStep. `docs/COMMAND_REFERENCE.md` is a copy of the firmware's
-command set documentation, included as an implementation reference.
+drivers for OnStep. `docs/dev/COMMAND_REFERENCE.md` is a copy of the
+firmware's command set documentation, included as an implementation
+reference.
