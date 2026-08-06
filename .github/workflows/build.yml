@@ -85,6 +85,15 @@ jobs:
       - name: Publish Alpaca server win-x64
         run: dotnet publish src/OnStepX.AlpacaServer -c Release -r win-x64 --self-contained true -o artifacts/win-x64
 
+      # net48 is framework dependent by nature: there is no self-contained deployment
+      # model for it the way there is for net8.0, so --self-contained is left out (it is
+      # silently ignored if added, verified locally, but omitting it says what is actually
+      # true). -r win-x86 pins the architecture, matching PlatformTarget in the csproj and
+      # the artifacts/win-x86 directory name below, even though it produces byte-identical
+      # output to a plain "dotnet publish -c Release" here.
+      - name: Publish COM shim win-x86
+        run: dotnet publish src/OnStepX.ComShim -c Release -r win-x86 -o artifacts/win-x86
+
       # The .iss arrives in phase 11. Until then this step is skipped
       # instead of breaking CI.
       - name: Check for installer
