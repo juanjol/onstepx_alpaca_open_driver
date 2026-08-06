@@ -8,7 +8,7 @@
 ; this script sits one level down in installer\, hence the "..\artifacts\..."
 ; sources below.
 
-#define AppVersion "0.1.0"
+#define AppVersion "0.2.0"
 #define AppPublisher "Juanjo Lopez"
 #define AppCompany "OnStepX ASCOM"
 #define AppNameString "OnStepX ASCOM"

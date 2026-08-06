@@ -24,7 +24,7 @@ regression.
 592 unit tests pass on Linux. The full solution, including the `net48` COM shim, builds
 on Windows CI; the Linux build uses `OnStepX.CrossPlatform.slnf`, which excludes the shim.
 
-A first beta, `v0.1.0-beta.1`, is published on the
+The current beta, `v0.2.0-beta.1`, is published on the
 [releases page](https://github.com/juanjol/onstepx_alpaca_open_driver/releases), with a
 Windows installer and Linux and Raspberry Pi tarballs. Tray icon mode
 (`H.NotifyIcon`), the Windows service and systemd hosting, the COM local server, and the

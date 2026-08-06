@@ -25,7 +25,7 @@ Once installed, read [USER_GUIDE.md](USER_GUIDE.md) for what to do next.
 
 ### Download
 
-From the release, take **`OnStepX.Ascom.Setup-0.1.0.exe`**. It carries
+From the release, take **`OnStepX.Ascom.Setup-0.2.0.exe`**. It carries
 everything: the Alpaca server, the COM shim, and the .NET runtime they need,
 so there is nothing else to install first.
 

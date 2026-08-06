@@ -9,7 +9,7 @@ speak COM.
 
 ## Status
 
-A first beta is published, `v0.1.0-beta.1`, with a Windows installer and
+A beta is published, `v0.2.0-beta.1`, with a Windows installer and
 Linux and Raspberry Pi packages on the
 [releases page](https://github.com/juanjol/onstepx_alpaca_open_driver/releases).
 It is still a beta: it has had far more hours against the built in simulator
