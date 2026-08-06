@@ -8,13 +8,13 @@ using OnStepX.Core.Protocol;
 namespace OnStepX.Devices;
 
 /// <summary>
-/// Shared plumbing for the four ASCOM devices: connection lifecycle, the
+/// Shared plumbing for the five ASCOM devices: connection lifecycle, the
 /// synchronous over asynchronous bridge, and translation of protocol failures into
 /// ASCOM exceptions.
 /// </summary>
 /// <remarks>
 /// <para>
-/// All four devices share one <see cref="OnStepXConnection"/>, so connecting here
+/// All five devices share one <see cref="OnStepXConnection"/>, so connecting here
 /// only registers this device with it. The transport is opened by whichever device
 /// connects first and closed by whichever disconnects last.
 /// </para>

@@ -2,8 +2,8 @@
 
 OnStepX ASCOM is an Alpaca server. It runs as a background process, talks to
 the OnStepX controller over the serial port (or over TCP for the WiFi addon),
-and offers the mount, the focuser, the rotator and the environmental sensors
-to any client on the network. Its configuration lives in a web page the server
+and offers the mount, the focuser, the rotator, the environmental sensors and
+the auxiliary features to any client on the network. Its configuration lives in a web page the server
 itself serves.
 
 There are two supported ways to install it:
@@ -74,9 +74,10 @@ entry next to it.
 
 COM registration happens every time, whichever startup choice you made. COM
 clients are independent of how the Alpaca server itself is hosted, so there is
-no case where skipping it would be right. After installing, four drivers named
-`OnStepX Telescope`, `OnStepX Focuser`, `OnStepX Rotator` and
-`OnStepX Observing Conditions` are available in any ASCOM Chooser.
+no case where skipping it would be right. After installing, five drivers named
+`OnStepX Telescope`, `OnStepX Focuser`, `OnStepX Rotator`,
+`OnStepX Observing Conditions` and `OnStepX Switch` are available in any ASCOM
+Chooser.
 
 ### Where the settings file ends up
 

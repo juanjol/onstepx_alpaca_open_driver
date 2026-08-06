@@ -1,3 +1,5 @@
+using OnStepX.Core.Configuration;
+
 namespace OnStepX.Core.Simulation;
 
 /// <summary>
@@ -186,6 +188,97 @@ public sealed class SimulatedWeather
             double gamma = Math.Log(h / 100.0) + (B * Temperature / (C + Temperature));
 
             return C * gamma / (B - gamma);
+        }
+    }
+}
+
+/// <summary>
+/// One simulated auxiliary feature slot.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The <see cref="Purpose"/> is configurable rather than a plain presence flag, because that
+/// is how a user configures the real thing: a slot is not "on" or "off", it is a switch or a
+/// dew heater or nothing. It is also the only way to reproduce the two behaviours a consumer
+/// has to survive, a purpose that reports itself and then refuses to be read, and a purpose
+/// the firmware renames before answering.
+/// </para>
+/// <para>
+/// <see cref="DeltaT"/> is nullable so a dew heater without a temperature sensor can be
+/// simulated. The firmware answers the literal <c>NAN</c> there, and a driver that turns that
+/// into zero degrees above the dew point would report the most alarming reading possible as
+/// if it were real.
+/// </para>
+/// </remarks>
+public sealed class SimulatedFeature
+{
+    /// <summary>What this slot is configured as. <c>None</c> means the slot is unused.</summary>
+    public FeaturePurpose Purpose { get; set; } = FeaturePurpose.None;
+
+    /// <summary>The configured name, up to ten characters in the firmware.</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Output value, 0 to 255.</summary>
+    public int Value { get; set; }
+
+    /// <summary>Whether a dew heater's ramp is running.</summary>
+    public bool DewHeaterEnabled { get; set; }
+
+    /// <summary>Delta above the dew point for full heater power, in degrees.</summary>
+    public double Zero { get; set; } = -5.0;
+
+    /// <summary>Delta above the dew point at which the heater switches off, in degrees.</summary>
+    public double Span { get; set; } = 15.0;
+
+    /// <summary>
+    /// Degrees this slot's sensor is above the dew point, or null for no sensor, which the
+    /// firmware reports as <c>NAN</c>.
+    /// </summary>
+    public double? DeltaT { get; set; }
+
+    /// <summary>Frames taken so far, for an intervalometer.</summary>
+    public int CurrentCount { get; set; }
+
+    /// <summary>Exposure length in seconds, for an intervalometer.</summary>
+    public double Exposure { get; set; } = 30.0;
+
+    /// <summary>Delay between frames in seconds, for an intervalometer.</summary>
+    public double Delay { get; set; } = 3.0;
+
+    /// <summary>Frames to take, for an intervalometer.</summary>
+    public int Count { get; set; } = 10;
+
+    /// <summary>
+    /// Supply voltage this slot draws, or null for a channel that reports no voltage. Only
+    /// reaches the wire on a build with power monitoring compiled in.
+    /// </summary>
+    public double? Volts { get; set; } = 12.1;
+
+    /// <summary>Current this slot draws, or null for a channel that reports no current.</summary>
+    public double? Amps { get; set; } = 0.4;
+
+    /// <summary>
+    /// Applies the firmware's rule that the ramp start stays strictly below its end,
+    /// adjusting whichever value was not the one just written.
+    /// </summary>
+    /// <param name="movedZero">
+    /// True when <see cref="Zero"/> was the value written, so <see cref="Span"/> holds still
+    /// and <see cref="Zero"/> gives way.
+    /// </param>
+    public void EnforceRampOrder(bool movedZero)
+    {
+        if (Zero < Span)
+        {
+            return;
+        }
+
+        if (movedZero)
+        {
+            Zero = Span - 0.1;
+        }
+        else
+        {
+            Span = Zero + 0.1;
         }
     }
 }

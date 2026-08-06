@@ -4,8 +4,8 @@
 
 <h1>OnStepX ASCOM</h1>
 <p class="lead">
-    One Alpaca server for the mount, the focuser, the rotator and the environmental sensors,
-    all sharing a single connection to the controller.
+    One Alpaca server for the mount, the focuser, the rotator, the environmental sensors and
+    the auxiliary features, all sharing a single connection to the controller.
 </p>
 
 <section class="card">
@@ -14,7 +14,7 @@
             <h2>Connection</h2>
             <p>
                 The port is opened by the first device that connects and closed by the last
-                one that leaves, so all four devices work over one serial port with no hub.
+                one that leaves, so all five devices work over one serial port with no hub.
             </p>
         </div>
         <div class="actions actions-inline">
@@ -102,12 +102,18 @@
                     <td><code>/api/v1/observingconditions/0</code></td>
                     <td><a href="weather">Weather</a></td>
                 </tr>
+                <tr>
+                    <td>Switch</td>
+                    <td>ISwitchV3</td>
+                    <td><code>/api/v1/switch/0</code></td>
+                    <td><a href="features">Switch</a></td>
+                </tr>
             </tbody>
         </table>
     </div>
 
     <p class="card-note">
-        Clients that speak Alpaca natively, such as NINA, find all four through discovery
+        Clients that speak Alpaca natively, such as NINA, find all five through discovery
         without an address being typed anywhere.
     </p>
 </section>

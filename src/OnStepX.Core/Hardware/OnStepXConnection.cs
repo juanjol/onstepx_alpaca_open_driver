@@ -57,7 +57,7 @@ public sealed record ControllerIdentity
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>It is the piece that replaces the external hub.</b> The four ASCOM
+/// <b>It is the piece that replaces the external hub.</b> The five ASCOM
 /// devices request the connection here, and only the first one opens the
 /// transport and only the last one closes it. Underneath,
 /// <see cref="OnStepChannel"/> serializes commands, so mount, focuser,

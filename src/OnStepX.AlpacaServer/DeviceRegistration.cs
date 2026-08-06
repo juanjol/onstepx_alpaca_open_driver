@@ -56,6 +56,7 @@ public static class DeviceRegistration
         registered += RegisterFocuser(loggerFactory, logger);
         registered += RegisterRotator(loggerFactory, logger);
         registered += RegisterObservingConditions(loggerFactory, logger);
+        registered += RegisterSwitch(loggerFactory, logger);
 
         if (registered == 0)
         {
@@ -182,6 +183,34 @@ public static class DeviceRegistration
         Track(weather);
 
         logger.LogInformation("Registered observing conditions device {Number}", DeviceNumber);
+
+        return 1;
+    }
+
+    /// <summary>
+    /// Registers the switch device, which exposes the controller's auxiliary features.
+    /// </summary>
+    /// <remarks>
+    /// Registered unconditionally, like the others. Whether this controller has any auxiliary
+    /// features cannot be known here, because finding out takes a command and nothing is
+    /// connected yet, so the device answers that question when a client connects to it.
+    /// </remarks>
+    private static int RegisterSwitch(ILoggerFactory loggerFactory, ILogger logger)
+    {
+        var auxiliary = new OnStepX.Devices.OnStepSwitch(
+            ServerRuntime.Connection,
+            () => ServerRuntime.Settings,
+            loggerFactory);
+
+        DeviceManager.LoadSwitch(
+            DeviceNumber,
+            auxiliary,
+            auxiliary.Name,
+            UniqueId("switch"));
+
+        Track(auxiliary);
+
+        logger.LogInformation("Registered switch device {Number}", DeviceNumber);
 
         return 1;
     }

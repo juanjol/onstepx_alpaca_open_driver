@@ -156,6 +156,43 @@ driver's sync offset, which is why the offset is a driver setting.
 An absent sensor shows as not supported. It never shows zero, because a zero dew point is
 believable and a client acts on it, and a false one closes an observatory roof for no reason.
 
+## Switch page
+
+Added in phase 12. There was no old WinForms equivalent: the auxiliary features were not
+reachable at all before this, which is why this page has no "old field" column.
+
+| Field | Where | Status |
+| --- | --- | --- |
+| Slot number, name and purpose, per configured slot | Live | done |
+| Switch state, with on and off buttons | Firmware | done |
+| Analog output level, 0 to 255, shown also as a percentage | Firmware | done |
+| Dew heater ramp running, with start and stop buttons | Firmware | done |
+| Dew heater full power at, -5 to 20 degrees | Firmware | done |
+| Dew heater switches off at, -5 to 20 degrees | Firmware | done |
+| Dew heater delta above the dew point | Live | done |
+| Intervalometer frame counters, exposure and delay | Live | done, read only |
+| Slots present but not offered to clients, with the reason | Live | done |
+| Read interval | JSON | done |
+
+Three things about this page are deliberate.
+
+**The dew heater ramp temperatures are here and are not ASCOM channels.** ASCOM defines
+switching a switch off as writing its minimum value, and clients really do walk the whole
+switch list doing that at the end of a session. A ramp start whose range is -5 to 20 degrees
+would be set to -5 by any of them, destroying the calibration and spending a non volatile
+storage cell on it. Clients get to start and stop the heater, which is what they need.
+
+**Every write is followed by reading the whole slot back.** The controller keeps the ramp start
+strictly below its end and quietly moves whichever value was not just written, so the number it
+kept is frequently not the number that was typed. Showing the typed value would be showing a
+fiction.
+
+**Slots the ASCOM device refuses to expose are still listed, with the reason.** An
+intervalometer reports its frame counters but never whether a sequence is running, so a switch
+for it could be written and never honestly read. A hidden switch reports itself present, then
+refuses to report its state and reports success for writes it never carries out. Without this
+section, a client showing fewer switches than the page shows slots would look like a bug.
+
 ## Diagnostics page
 
 | Field | Status |

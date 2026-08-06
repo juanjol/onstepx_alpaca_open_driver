@@ -12,7 +12,7 @@ namespace OnStepX.Core.Protocol;
 /// <remarks>
 /// <para>
 /// <b>It is the sole owner of the transport.</b> All transactions go
-/// through a single permit semaphore, so the four ASCOM devices can share
+/// through a single permit semaphore, so the five ASCOM devices can share
 /// one serial port without stepping on each other. This is what makes an
 /// external hub with named pipes unnecessary.
 /// </para>

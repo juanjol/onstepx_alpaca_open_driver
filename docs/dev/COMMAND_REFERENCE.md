@@ -700,9 +700,28 @@ Rotator rate presets:
 
 ## Auxiliary Features
 
-Available when auxiliary features are enabled.
+Available when auxiliary features are enabled, which happens automatically as soon as any of the eight `FEATUREn_PURPOSE` settings is not `OFF`.
 
 Feature slots are numbered `1..8`.
+
+### Purpose Codes
+
+From the firmware's `src/Constants.h`. This table is the reason the section below can be parsed at all: the reply shape of `:GXXn#` depends entirely on the purpose, and the purpose is only available from `:GXYn#`.
+
+| Code | Constant | Meaning |
+| --- | --- | --- |
+| `0` | `OFF` | Slot unused |
+| `1` | `SWITCH` | Plain on and off switch |
+| `2` | `ANALOG_OUTPUT`, `ANALOG_OUT` | Pulse width modulated output, needs MCU support |
+| `3` | `DEW_HEATER` | Dew heater with its own temperature driven power ramp |
+| `4` | `INTERVALOMETER` | Camera shutter release |
+| `5` | `MOMENTARY_SWITCH` | Switch that releases itself after a 50 ms pulse |
+| `6` | `HIDDEN_SWITCH` | Slot that exists only to hold a pin state from boot |
+| `7` | `COVER_SWITCH` | Servo driven OTA cover, where `1` is closed and `0` is open |
+
+**Codes 5 and 7 never appear on the wire.** `:GXYn#` rewrites both to `1` before answering, so a client cannot distinguish a momentary switch or a cover switch from a plain one, and a cover's inverted meaning is invisible. Code 6 is **not** rewritten.
+
+**Code 6 is present and unusable.** A hidden switch appears as `1` in the `:GXY0#` bitmap and names itself in `:GXYn#`, but `:GXXn#` matches no branch and answers `CE_CMD_UNKNOWN`, while `:SXXn,Vv#` stores the value, raises no error and returns `1` without ever writing the pin. A consumer must skip these slots: exposing one produces a channel that cannot be read and accepts writes that silently do nothing.
 
 ### Discovery
 
@@ -711,17 +730,25 @@ Feature slots are numbered `1..8`.
 | `:GXY0#` | `xxxxxxxx#` | Eight-character bitmap of active feature slots, `1` = present |
 | `:GXYn#` | `name,purpose#` | Slot name plus purpose code |
 
+`:GXY0#` is the **only** command that separates an absent slot from a switch that is off, because an off switch answers a bare `0` and so does a build with no auxiliary features at all. Establish presence from the bitmap once, and never from a slot's own state reply.
+
+The name is the configured `FEATUREn_NAME`, copied verbatim and truncated to ten characters. Nothing stops it containing a comma, so split the reply on its **last** comma rather than its first. An unconfigured slot answers `CE_0`, that is, a bare `0`.
+
 ### Slot State
 
-| Command | Reply | Description |
-| --- | --- | --- |
-| `:GXXn#` | purpose-specific payload | Get current state for slot `n` |
-| `:SXXn,Vv#` | `0/1` | Generic value set |
-| `:SXXn,Zf#` | `0/1` | Dew-heater zero temperature |
-| `:SXXn,Sf#` | `0/1` | Dew-heater span temperature |
-| `:SXXn,Ef#` | `0/1` | Intervalometer exposure seconds |
-| `:SXXn,Df#` | `0/1` | Intervalometer delay seconds |
-| `:SXXn,Cf#` | `0/1` | Intervalometer count |
+| Command | Reply | Description | Accepted range |
+| --- | --- | --- | --- |
+| `:GXXn#` | purpose-specific payload | Get current state for slot `n` | |
+| `:SXXn,Vv#` | `0/1` | Generic value set | `0..255`, then narrowed by purpose |
+| `:SXXn,Zf#` | `0/1` | Dew-heater zero temperature | `-5.0` to `20.0` |
+| `:SXXn,Sf#` | `0/1` | Dew-heater span temperature | `-5.0` to `20.0` |
+| `:SXXn,Ef#` | `0/1` | Intervalometer exposure seconds | `0.0` to `3600.0` |
+| `:SXXn,Df#` | `0/1` | Intervalometer delay seconds | `1.0` to `3600.0` |
+| `:SXXn,Cf#` | `0/1` | Intervalometer count | `0` to `255` |
+
+`v` is narrowed after the generic range check: a switch, a dew heater and an intervalometer all accept only `0` or `1`, an analog output accepts the whole byte. A value outside the purpose's own range gives `CE_PARAM_RANGE`, and a selector letter the purpose does not have gives `CE_PARAM_FORM`. Writing to an unconfigured slot gives `CE_CMD_UNKNOWN`.
+
+Note that `:SXXn,Vv#` stores the raw value in the slot **before** the purpose is examined, so a refused command has still changed the stored value even though nothing was actuated.
 
 ### `:GXXn#` Reply Shapes
 
@@ -733,12 +760,19 @@ The payload depends on the slot purpose:
 | Analog output | `value` plus optional power telemetry |
 | Dew heater | `enabled,zero,span,deltaT` plus optional power telemetry |
 | Intervalometer | `currentCount,exposure,delay,count` |
+| Hidden switch | none, answers `CE_CMD_UNKNOWN` |
+
+A dew heater's `zero` and `span` print with one decimal, and `deltaT` is `temperature.getChannel(n)` minus the dew point, printed as the literal string **`NAN`** whenever the slot has no `FEATUREn_TEMP` sensor or the dew point is unavailable. Reading that as zero would be actively harmful: zero degrees above the dew point is the moment a heater matters most.
+
+An intervalometer's durations print with fewer decimals the larger they get. An exposure uses three decimals below one second, two below ten, one below thirty and none above; a delay is the same without the three decimal case. There is **no** enabled field, so whether a sequence is running cannot be read back at all, only written with `:SXXn,V1#`.
+
+The dew heater's ramp runs full power at `deltaT == zero` and off at `deltaT == span`, linear in between. `setZero` and `setSpan` write to non volatile storage on every call and the firmware keeps `zero` strictly below `span`, moving whichever value was not the one just written by 0.1 degrees. **Always read the slot back after writing a ramp temperature**, because the value the controller kept is frequently not the value that was sent. The heater's actual duty state exists in the firmware as `isOn()` but is not exposed by any command.
 
 When power monitoring is compiled in, the local ASCII implementation appends:
 
 `;<volts>,<amps>,<flags>`
 
-Where flags are a five-character string using `P`, `C`, `U`, `V`, `T` or `!`.
+Where flags are a five-character string using `P`, `C`, `U`, `V`, `T` or `!`. Volts and amps are each either a one decimal number or the literal `NAN`. The suffix is appended to every purpose except the intervalometer, so split a reply on `;` before splitting on `,`: doing it the other way round makes a dew heater look as though it had seven fields and reports the supply voltage as the delta above the dew point.
 
 ## Axis / Motor / Driver Service Commands
 

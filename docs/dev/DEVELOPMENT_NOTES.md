@@ -5,7 +5,7 @@ before changing anything in the protocol or device layers.
 
 ## Current state
 
-Phases 0 to 11 are complete. All four ASCOM devices are implemented and **pass Conform
+Phases 0 to 12 are complete. All five ASCOM devices are implemented and **pass Conform
 Universal with zero issues** against the built in simulator.
 
 | Device | Interface | Conform |
@@ -14,8 +14,14 @@ Universal with zero issues** against the built in simulator.
 | Focuser | `IFocuserV4` | 0 issues |
 | Rotator | `IRotatorV4` | 0 issues |
 | ObservingConditions | `IObservingConditionsV2` | 0 issues |
+| Switch | `ISwitchV3` | 0 issues |
 
-506 unit tests pass on Linux. The full solution, including the `net48` COM shim, builds
+One caveat on the telescope row: the simulator starts pointing at a fixed position, so for part of
+the day it is below the horizon and Conform reports an `Altitude is <0.0 degrees` issue on the
+first property it reads. See the simulator section for how to tell that apart from a real
+regression.
+
+592 unit tests pass on Linux. The full solution, including the `net48` COM shim, builds
 on Windows CI; the Linux build uses `OnStepX.CrossPlatform.slnf`, which excludes the shim.
 
 A first beta, `v0.1.0-beta.1`, is published on the
@@ -34,7 +40,13 @@ the built in simulator than against a real mount under a real sky.
 - Authentication support in the COM shim (`src/OnStepX.ComShim/Config/AlpacaEndpoint.cs`
   only reads the port today, not credentials, so a server with `useAuthentication` on
   will refuse the shim's connections).
-- Real hardware validation beyond the simulator.
+- Real hardware validation beyond the simulator. For the auxiliary features specifically, no slot
+  has been seen reporting purpose 6 on real firmware: the reason that purpose is excluded comes
+  from reading `Features.command.cpp`, not from a capture.
+- Auxiliary feature purposes left out on purpose, either of which could be picked up later. The
+  intervalometer is parsed and shown on the setup page but is not an ASCOM switch, because its
+  running state cannot be read back. Power telemetry (`;volts,amps,flags`) is split off the reply
+  and kept in `FeatureState.Raw` and `PowerTelemetry` but is not modelled or displayed.
 
 ## Environment
 
@@ -66,7 +78,7 @@ tools/conformu conformance "http://127.0.0.1:11111/api/v1/telescope/0" -n /tmp/c
 - `OnStepX.Core` knows the protocol and nothing about ASCOM. Transports, framing, the
   LX200 formats, the status parser, port autodiscovery, the simulator, the settings model
   and the shared connection.
-- `OnStepX.Devices` implements the four ASCOM interfaces on top of Core.
+- `OnStepX.Devices` implements the five ASCOM interfaces on top of Core.
 - `OnStepX.AlpacaServer` hosts them behind `ASCOM.Alpaca.Razor`, which supplies the whole
   REST surface, UDP discovery and the management API, plus the Blazor setup pages.
 - `OnStepX.Core/Configuration/ControllerConfiguration` reads and writes the settings the
@@ -81,7 +93,7 @@ Two decisions worth not relitigating:
 
 **One shared connection, reference counted per device.** `OnStepXConnection` opens the
 transport for the first device that connects and closes it for the last one that leaves.
-`OnStepChannel` serialises commands, so all four devices work over a single serial port.
+`OnStepChannel` serialises commands, so all five devices work over a single serial port.
 This is why no external hub is needed. The count is **per device, not per call**, because
 many clients set `Connected = true` more than once and `false` only once.
 
@@ -166,6 +178,29 @@ Each of these was a genuine bug, most of them found by Conform Universal.
 - **Write the UTC offset before the clock.** The firmware interprets the local time it is
   given against the offset it currently holds, so setting the time first and the offset second
   stores a time wrong by the difference between the two offsets.
+- **An auxiliary feature slot of purpose `HIDDEN_SWITCH` reports itself present and then
+  refuses to work.** `:GXY0#` marks it, `:GXYn#` names it, and then `:GXXn#` matches no branch
+  in `Features::command` and answers `CE_CMD_UNKNOWN`, while `:SXXn,Vv#` stores the value,
+  raises no error and returns `1` without writing the pin. A driver that exposes one produces a
+  channel that cannot be read and accepts writes that appear to succeed and do nothing. It has
+  to be skipped, and the skip has to be logged, or it looks like the driver lost a slot.
+- **`:GXYn#` rewrites purposes 5 and 7 to 1, and leaves 6 alone.** A momentary switch and a
+  cover switch are both reported as a plain switch, so a cover's inverted meaning, where `1` is
+  closed, is invisible on the wire. Do not try to detect it.
+- **An intervalometer's enabled flag is write only.** `:GXXn#` answers
+  `currentCount,exposure,delay,count` with nothing about whether a sequence is running.
+  Deriving it from the frame counter lies the moment a sequence finishes, which is why the
+  Switch device leaves that purpose out entirely rather than guessing.
+- **A dew heater's `deltaT` is the literal string `NAN` when the slot has no temperature
+  sensor.** Parsing that as zero reports the most alarming value the device can give, zero
+  degrees above the dew point, as though it were measured.
+- **The power monitoring suffix uses a semicolon, and the fields inside it use commas.** Split
+  `:GXXn#` on `;` first. Splitting on `,` first makes a dew heater look as though it had seven
+  fields and reports the supply voltage as the delta above the dew point.
+- **The dew heater ramp writes to non volatile storage and corrects itself.** `setZero` and
+  `setSpan` both write NV on every call, and the firmware keeps `zero` strictly below `span` by
+  moving whichever value was not just written. Read the slot back after any ramp write, and do
+  not put these on a path a client can hammer.
 
 ### ASCOM semantics
 
@@ -189,6 +224,24 @@ Each of these was a genuine bug, most of them found by Conform Universal.
   throughout, because ASCOM promises arrival when it clears.
 - **`DestinationSideOfPier` has to save and restore the target**, since `:MD#` reports the
   destination for whatever target is currently set.
+- **`SetSwitch(id, false)` is defined as "write `MinSwitchValue`"**, and clients really do walk
+  the whole switch list doing it at the end of a session. So a channel whose minimum is a
+  meaningful setting rather than "off" is a trap: exposing a dew heater's ramp start, whose
+  range is -5 to 20 degrees, would let any such client write -5 and destroy the calibration.
+  That is why the ramp temperatures are on the setup page and not in the channel list.
+- **`MaxSwitch` has to be stable for the whole connection.** Clients read it once and then
+  iterate, so the channel map is built in `OnConnectedAsync` and never touched again. It is
+  also why a dew heater's delta channel is created only when the controller answers a number
+  for it at connect time: a channel that appears and disappears is worse than one that is
+  never there.
+- **`CanAsync` being false does not excuse the async members from validating the id.** ConformU
+  checks that `SetAsync`, `SetAsyncValue`, `StateChangeComplete` and `CancelAsync` all throw
+  `InvalidValueException` for an out of range id, so the id must be checked **before** the
+  `MethodNotImplementedException` is raised.
+- **A Switch `DeviceState` uses `GetSwitch{i}` and `GetSwitchValue{i}`**, with the channel
+  number appended, plus `TimeStamp`. With `CanAsync` false throughout, the `StateChangeComplete{i}`
+  entries are simply absent and ConformU reports that as information rather than an issue.
+  `DeviceState` and the properties must agree exactly, so both go through one clamping helper.
 
 ### Our own code
 
@@ -241,6 +294,16 @@ rather than convenient:
 
 - Its clock runs with the real one. A frozen clock made sidereal time drift hours away from
   reality.
+- **A consequence worth knowing before you think you broke the telescope.** The simulated mount
+  starts at a fixed right ascension of 0 hours and declination of 45 degrees, and the site
+  defaults to Madrid. Since the clock is the real one, whether that position is above the horizon
+  depends on the time of day, and for part of the day it is not. Conform then reports one issue,
+  `Altitude is <0.0 degrees`, on the very first property it reads. It is not a driver fault and
+  it is not a regression: reading `:GA#` on a mount pointing below the horizon is the mount
+  answering correctly. Confirm it the cheap way, by running the same conformance against an
+  unmodified build at the same moment, which reports the same altitude to a fraction of an
+  arcsecond. Slew the simulator somewhere visible, or run at a time when the position is up, to
+  get the clean pass the table above records.
 - Axes move over time. Rate offsets really drift, pulse guides really move, manual moves
   really move.
 - Pier side is **derived from hour angle**, not stored, because that is how a German
@@ -253,6 +316,18 @@ rather than convenient:
 - The rotator moves at 12 degrees per second. See the comment on that field: a realistic
   rate is required because crossing the mechanical limit turns a 45 degree ASCOM move into a
   315 degree mechanical sweep.
+- The auxiliary feature slots are configured with a **mixed and deliberately awkward** default:
+  a switch, an analog output, a dew heater with a temperature sensor, a dew heater without one,
+  an intervalometer and a hidden switch. So a single conformance run covers the slots that get
+  exposed, the two purposes that must be skipped, and the reading that comes back as `NAN`,
+  rather than only the case that works. Expected `MaxSwitch` for that default is **5**.
+- A slot's **purpose** is configurable, not just its presence, because that is how a user
+  configures the real thing. It is also the only way to reproduce a purpose that reports itself
+  present and then refuses to be read.
+- Power monitoring is off by default and switchable with `PowerMonitoringPresent`, so the
+  `;volts,amps,flags` suffix can be tested without becoming the normal case.
+- The dew heater reproduces the firmware's own correction that keeps the ramp start below its
+  end, so a driver that trusts its own write instead of reading back is caught here.
 
 ## Conventions
 

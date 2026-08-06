@@ -267,6 +267,7 @@ public sealed partial class FakeOnStepDevice : ITransport
         ?? DispatchSite(cmd)
         ?? DispatchFocuser(cmd)
         ?? DispatchRotator(cmd)
+        ?? DispatchFeatures(cmd)
         ?? SimReply.Bool(false);
 
     private SimReply? DispatchFirmware(string cmd) => cmd switch

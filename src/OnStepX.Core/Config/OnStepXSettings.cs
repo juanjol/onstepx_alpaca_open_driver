@@ -156,6 +156,29 @@ public sealed record ObservingConditionsSettings
     public bool PushWeatherToController { get; set; }
 }
 
+/// <summary>Auxiliary feature settings, which the Switch device exposes.</summary>
+public sealed record SwitchSettings
+{
+    /// <summary>Lowest interval the driver accepts, in milliseconds.</summary>
+    public const int MinimumPollIntervalMilliseconds = 1000;
+
+    /// <summary>Highest interval the driver accepts, in milliseconds.</summary>
+    public const int MaximumPollIntervalMilliseconds = 30_000;
+
+    /// <summary>
+    /// How often the feature slots are read, in milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// Separate from the shared connection's interval, and slower, deliberately. There is one
+    /// command per configured slot and there can be eight of them, so at the connection's
+    /// interval the switches alone would fill a shared serial line and the mount would be
+    /// waiting behind them. Nothing is lost by polling slowly: a slot only changes when a
+    /// client writes it, and every write marks the cache stale, so the next read is fresh
+    /// whatever this is set to.
+    /// </remarks>
+    public int PollIntervalMilliseconds { get; set; } = 2000;
+}
+
 /// <summary>Alpaca server settings.</summary>
 public sealed record ServerSettings
 {
@@ -232,6 +255,9 @@ public sealed record OnStepXSettings
 
     /// <summary>Environmental sensors.</summary>
     public ObservingConditionsSettings ObservingConditions { get; set; } = new();
+
+    /// <summary>Auxiliary features.</summary>
+    public SwitchSettings Switch { get; set; } = new();
 
     /// <summary>Server.</summary>
     public ServerSettings Server { get; set; } = new();

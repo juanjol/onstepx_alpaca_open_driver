@@ -34,6 +34,7 @@ report what breaks.
 | Focuser (1 to 6) | `IFocuserV4` |
 | Rotator | `IRotatorV4` |
 | Environmental sensors | `IObservingConditionsV2` |
+| Auxiliary features, including dew heaters | `ISwitchV3` |
 
 ## Why Alpaca
 
@@ -61,6 +62,10 @@ shim, or ASCOM Platform 7's Alpaca aware Chooser.
   rates. Works on Windows and on Linux.
 * **Position on connect** for focuser and rotator, optional and non
   blocking.
+* **Dew heaters, switches and analog outputs** from any ASCOM client, taken
+  from the controller's eight auxiliary feature slots. The heater's
+  temperature calibration stays in the setup pages, where a client cannot
+  overwrite it by accident.
 * **Extended OnStepX configuration**: meridian flip, limits, tracking
   compensation, backlash, goto speed, home, park, PEC, buzzer and diagnostics.
 * **Exportable configuration** to JSON, portable between installations.

@@ -10,13 +10,13 @@ server is on a Raspberry Pi at the telescope.
 ## How it fits together
 
 There is one server and one connection to the controller. The mount, the
-focuser, the rotator and the environmental sensors are four ASCOM devices, but
-they all reach the same OnStepX controller over the same cable. The server
-opens the port for the first device that connects and closes it for the last
-one that leaves, so there is no need for a serial port splitter or a hub, and
-no risk of two clients fighting over the port.
+focuser, the rotator, the environmental sensors and the auxiliary features are
+five ASCOM devices, but they all reach the same OnStepX controller over the
+same cable. The server opens the port for the first device that connects and
+closes it for the last one that leaves, so there is no need for a serial port
+splitter or a hub, and no risk of two clients fighting over the port.
 
-Clients reach those four devices either over Alpaca, straight over the
+Clients reach those five devices either over Alpaca, straight over the
 network, or over COM through the shim the Windows installer registers. Both
 routes end up at the same server.
 
@@ -81,7 +81,7 @@ The navigation bar has one entry per area.
 
 **Dashboard.** The state of the connection, which devices are currently
 holding the port, what the controller reports about itself, and the last
-error if there was one. A "Test connection" button, and the table of the four
+error if there was one. A "Test connection" button, and the table of the five
 devices with their Alpaca addresses. If the server was started in simulated
 mode, this page says so loudly.
 
@@ -123,6 +123,39 @@ controller. A sensor that is not fitted shows as not supported. It never shows
 zero, because a zero dew point is believable and a client that acts on it
 might close a roof for nothing.
 
+**Switch.** The controller's eight auxiliary feature slots, which is where dew
+heaters, fans, flat panels and camera shutter releases live. What each slot is
+was decided when the firmware was built, with the `FEATUREn_PURPOSE` settings,
+so this page shows what the controller reports rather than letting you create
+a slot. Switches and analog outputs can be operated here as well as from a
+client. A dew heater shows whether its ramp is running, the two temperatures
+that define the ramp, and how far above the dew point its sensor currently is.
+
+Two things on this page are worth knowing.
+
+The heater's two ramp temperatures are here and **not** offered to clients.
+The controller runs the heater itself: at the "full power at" temperature the
+heater runs flat out, at the "switches off at" temperature it stops, and in
+between the power ramps down. Those two values are the calibration, they live
+in the controller's non volatile memory, and ASCOM defines switching a switch
+off as writing its lowest value. A client tidying up at the end of a session by
+switching everything off would therefore have written the lowest possible
+calibration and thrown yours away. Clients get to start and stop the heater,
+which is what they actually need.
+
+The controller also keeps the two temperatures in order, so if you set the
+"full power at" value above the "switches off at" value it will quietly move
+one of them. The page reads the slot back after every write for exactly that
+reason: what you see afterwards is what the controller kept, not what you
+typed.
+
+Some slots appear on this page and deliberately not in a client's switch list,
+and the page tells you which and why. A camera shutter release is one: the
+controller reports the frame counters but never whether a sequence is running,
+so a switch for it could be written and never honestly read. A slot configured
+as a hidden switch is the other: the controller reports it as present, refuses
+to report its state, and reports success for writes it never carries out.
+
 **Diagnostics.** Firmware identification and build, mount type, instrument
 angles, encoder counts, steps per degree, step frequencies, stepper driver
 status and StallGuard telemetry, MCU temperature, the last command error, and
@@ -139,7 +172,7 @@ described below.
 
 Clients that speak Alpaca natively, NINA being the obvious one, find the
 server by themselves. The server answers Alpaca discovery over UDP, so as long
-as the client is on the same network, all four devices appear in its device
+as the client is on the same network, all five devices appear in its device
 list with no IP address or port typed anywhere.
 
 Each device answers at device number zero, since there is only ever one mount
@@ -154,13 +187,14 @@ Clients that only speak COM, such as PHD2, Cartes du Ciel and SGP, use the COM
 shim. The Windows installer registers it for you, always, whichever startup
 option you picked.
 
-After installing, four entries appear in the ASCOM Chooser like any other COM
+After installing, five entries appear in the ASCOM Chooser like any other COM
 driver:
 
 * `OnStepX Telescope`
 * `OnStepX Focuser`
 * `OnStepX Rotator`
 * `OnStepX Observing Conditions`
+* `OnStepX Switch`
 
 Pick the one the client asks for and that is the whole configuration. The shim
 has no settings of its own: it reads the Alpaca port out of the server's own

@@ -1,0 +1,445 @@
+@page "/features"
+@using System.Globalization
+@using OnStepX.Core.Config
+@using OnStepX.Core.Configuration
+@inherits SetupPageBase
+
+<h1>Switch</h1>
+<p class="lead">
+    The controller's eight auxiliary feature slots, which the ASCOM Switch device exposes.
+    What each slot is was decided when the firmware was built, so nothing here creates or
+    removes a slot: this page shows what the controller reports and lets you adjust the parts
+    a client has no business writing. The driver's own setting is at the bottom, and that one
+    only takes effect when saved.
+</p>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Controller values</h2>
+            <p>Read from the controller, and every change here takes effect immediately.</p>
+        </div>
+        <div class="actions actions-inline">
+            <button @onclick="ReadAllAsync" disabled="@Busy">
+                @(Busy ? "Working..." : "Read from controller")
+            </button>
+        </div>
+    </div>
+
+    @if (Status is not null)
+    {
+        <p class="notice @(Failed ? "notice-error" : "notice-ok")">@Status</p>
+    }
+
+    @if (_slots is null && !Busy)
+    {
+        <p class="muted">Nothing read yet.</p>
+    }
+    else if (_slots is { Count: 0 })
+    {
+        <p class="notice notice-error">
+            This firmware build reports no auxiliary features. Set FEATURE1_PURPOSE, or another
+            of the eight, in the controller's configuration and reflash it. Until then the
+            Switch device will refuse to connect, which is deliberate: answering a client with
+            an empty switch list would look like working hardware with nothing plugged in.
+        </p>
+    }
+</section>
+
+@if (_slots is { Count: > 0 })
+{
+    @foreach (FeatureSlot slot in _slots)
+    {
+        <FirmwareCard Title="@SlotTitle(slot)" Busy="Busy" Loaded="true"
+                      Description="@SlotDescription(slot)">
+            <ChildContent>
+                @if (State(slot) is { } state)
+                {
+                    @switch (slot.Purpose)
+                    {
+                        case FeaturePurpose.Switch:
+                        case FeaturePurpose.MomentarySwitch:
+                        case FeaturePurpose.CoverSwitch:
+                            <dl>
+                                <dt>State</dt>
+                                <dd>@(state.Value is > 0 ? "on" : "off")</dd>
+                            </dl>
+
+                            <div class="actions actions-inline">
+                                <button @onclick="() => SetValueAsync(slot, 1)" disabled="@Busy">
+                                    Switch on
+                                </button>
+                                <button @onclick="() => SetValueAsync(slot, 0)" disabled="@Busy">
+                                    Switch off
+                                </button>
+                            </div>
+                            break;
+
+                        case FeaturePurpose.AnalogOutput:
+                            <dl>
+                                <dt>Output</dt>
+                                <dd class="numeric">
+                                    @(state.Value?.ToString(CultureInfo.InvariantCulture) ?? "not reported")
+                                    @if (state.Value is { } level)
+                                    {
+                                        <span class="muted"> (@Percent(level) percent)</span>
+                                    }
+                                </dd>
+                            </dl>
+
+                            <Field Label="Output" For="@($"level{slot.Slot}")" Unit="0 to 255"
+                                   Hint="Pulse width modulated, so 0 is off and 255 is full power.">
+                                <input id="@($"level{slot.Slot}")" type="number" step="1" min="0" max="255"
+                                       value="@Level(slot)"
+                                       @onchange="e => LevelChanged(slot, e)" />
+                            </Field>
+
+                            <div class="actions actions-inline">
+                                <button @onclick="() => SetValueAsync(slot, Level(slot))" disabled="@Busy">
+                                    Apply output
+                                </button>
+                            </div>
+                            break;
+
+                        case FeaturePurpose.DewHeater:
+                            <dl>
+                                <dt>Ramp</dt>
+                                <dd>@(state.DewHeaterEnabled == true ? "running" : "stopped")</dd>
+
+                                <dt>Full power at</dt>
+                                <dd class="numeric">@Degrees(state.Zero)</dd>
+
+                                <dt>Switches off at</dt>
+                                <dd class="numeric">@Degrees(state.Span)</dd>
+
+                                <dt>Now above the dew point</dt>
+                                <dd class="numeric">
+                                    @if (state.DeltaT is { } delta)
+                                    {
+                                        @Degrees(delta)
+                                    }
+                                    else
+                                    {
+                                        <em>not supported</em>
+                                        <span class="muted">
+                                            (this slot has no temperature sensor, or the dew point
+                                            is unavailable)
+                                        </span>
+                                    }
+                                </dd>
+                            </dl>
+
+                            <div class="actions actions-inline">
+                                <button @onclick="() => SetValueAsync(slot, 1)" disabled="@Busy">
+                                    Start ramp
+                                </button>
+                                <button @onclick="() => SetValueAsync(slot, 0)" disabled="@Busy">
+                                    Stop ramp
+                                </button>
+                            </div>
+
+                            <Field Label="Full power at" For="@($"zero{slot.Slot}")" Unit="degrees above the dew point"
+                                   Hint="Where the heater runs flat out. Must stay below the value it switches off at, and the controller will move it for you if it does not.">
+                                @* step="any" deliberately: a validated step turns the
+                                   controller's own 0.1 degree correction into a field the
+                                   browser marks invalid. *@
+                                <input id="@($"zero{slot.Slot}")" type="number" step="any"
+                                       min="@RampMinimum" max="@RampMaximum"
+                                       value="@Ramp(slot, zero: true)"
+                                       @onchange="e => RampChanged(slot, zero: true, args: e)" />
+                            </Field>
+
+                            <Field Label="Switches off at" For="@($"span{slot.Slot}")" Unit="degrees above the dew point"
+                                   Hint="Where the heater stops. Between the two values the power ramps down linearly.">
+                                <input id="@($"span{slot.Slot}")" type="number" step="any"
+                                       min="@RampMinimum" max="@RampMaximum"
+                                       value="@Ramp(slot, zero: false)"
+                                       @onchange="e => RampChanged(slot, zero: false, args: e)" />
+                            </Field>
+
+                            <div class="actions actions-inline">
+                                <button @onclick="() => ApplyRampAsync(slot)" disabled="@Busy">
+                                    Apply ramp
+                                </button>
+                            </div>
+
+                            <p class="muted">
+                                These two are stored in the controller's non volatile memory, so
+                                they survive a power cycle and there is no point writing them
+                                often. They are also why a dew heater's ramp is not an ASCOM
+                                switch: a client switching everything off on the way out would
+                                write the lowest possible value here and the calibration would be
+                                gone.
+                            </p>
+                            break;
+
+                        case FeaturePurpose.Intervalometer:
+                            <dl>
+                                <dt>Frames taken</dt>
+                                <dd class="numeric">@Count(state.CurrentCount)</dd>
+
+                                <dt>Exposure</dt>
+                                <dd class="numeric">@Seconds(state.Exposure)</dd>
+
+                                <dt>Delay between frames</dt>
+                                <dd class="numeric">@Seconds(state.Delay)</dd>
+
+                                <dt>Frames to take</dt>
+                                <dd class="numeric">@Count(state.Count)</dd>
+                            </dl>
+                            break;
+
+                        default:
+                            <p class="muted">
+                                The controller reports this slot as present and then refuses to
+                                report its state, so there is nothing to show.
+                            </p>
+                            break;
+                    }
+                }
+                else
+                {
+                    <p class="muted">The controller did not report this slot's state.</p>
+                }
+            </ChildContent>
+        </FirmwareCard>
+    }
+
+    @if (_slots.Any(slot => !slot.Purpose.IsControllable()))
+    {
+        <section class="card">
+            <div class="card-head">
+                <div>
+                    <h2>Not offered to clients</h2>
+                    <p>
+                        These slots exist in the controller and are deliberately left out of the
+                        ASCOM switch list, so a client showing fewer switches than this page
+                        shows slots is working correctly.
+                    </p>
+                </div>
+            </div>
+
+            <dl>
+                @foreach (FeatureSlot slot in _slots.Where(slot => !slot.Purpose.IsControllable()))
+                {
+                    <dt>@slot.Slot. @slot.Name</dt>
+                    <dd>@slot.Purpose.UncontrollableReason()</dd>
+                }
+            </dl>
+        </section>
+    }
+}
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Driver settings</h2>
+            <p>These are driver settings, the controller neither stores nor needs them.</p>
+        </div>
+    </div>
+
+    <Field Label="Read interval" For="switchpoll" Unit="milliseconds"
+           Hint="How often the Switch device refreshes its slots. There is one command per slot and there can be eight, so a short interval here fills a shared serial line and leaves the mount queueing behind it. Nothing is lost by being slow: a write always refreshes immediately.">
+        <input id="switchpoll" type="number" step="100"
+               min="@SwitchSettings.MinimumPollIntervalMilliseconds"
+               max="@SwitchSettings.MaximumPollIntervalMilliseconds"
+               @bind="Working.Switch.PollIntervalMilliseconds" />
+    </Field>
+</section>
+
+<SaveBar IsDirty="IsDirty" Status="@SaveStatus" Failed="SaveFailed"
+         OnSave="Save" OnRevert="Revert" />
+
+@code {
+    private IReadOnlyList<FeatureSlot>? _slots;
+    private IReadOnlyDictionary<int, FeatureState> _states = new Dictionary<int, FeatureState>();
+
+    // Edited values per slot, kept apart from what the controller reported so a half typed
+    // number is never mistaken for a reading.
+    private readonly Dictionary<int, int> _levels = new();
+    private readonly Dictionary<int, double> _zeros = new();
+    private readonly Dictionary<int, double> _spans = new();
+
+    private static readonly string RampMinimum =
+        ControllerConfiguration.DewHeaterRampMinimum.ToString("0.0", CultureInfo.InvariantCulture);
+
+    private static readonly string RampMaximum =
+        ControllerConfiguration.DewHeaterRampMaximum.ToString("0.0", CultureInfo.InvariantCulture);
+
+    private FeatureState? State(FeatureSlot slot) =>
+        _states.TryGetValue(slot.Slot, out FeatureState? state) ? state : null;
+
+    private Task ReadAllAsync() =>
+        RunAsync(
+            async token =>
+            {
+                _slots = await Session.Configuration.ReadFeatureSlotsAsync(token);
+                _states = await Session.Configuration.ReadFeatureStatesAsync(_slots, token);
+
+                SeedEditors();
+            },
+            "Read from the controller.");
+
+    /// <summary>
+    /// Fills the editable fields from what the controller reported, so the form starts from the
+    /// truth rather than from zero.
+    /// </summary>
+    private void SeedEditors()
+    {
+        foreach (FeatureState state in _states.Values)
+        {
+            if (state.Value is { } level)
+            {
+                _levels[state.Slot] = level;
+            }
+
+            if (state.Zero is { } zero)
+            {
+                _zeros[state.Slot] = zero;
+            }
+
+            if (state.Span is { } span)
+            {
+                _spans[state.Slot] = span;
+            }
+        }
+    }
+
+    private int Level(FeatureSlot slot) =>
+        _levels.TryGetValue(slot.Slot, out int level) ? level : 0;
+
+    private void LevelChanged(FeatureSlot slot, ChangeEventArgs args)
+    {
+        if (int.TryParse(
+                args.Value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int level))
+        {
+            _levels[slot.Slot] = Math.Clamp(level, 0, ControllerConfiguration.FeatureValueMaximum);
+        }
+    }
+
+    private string Ramp(FeatureSlot slot, bool zero)
+    {
+        Dictionary<int, double> source = zero ? _zeros : _spans;
+
+        return source.TryGetValue(slot.Slot, out double value)
+            ? value.ToString("0.0", CultureInfo.InvariantCulture)
+            : string.Empty;
+    }
+
+    private void RampChanged(FeatureSlot slot, bool zero, ChangeEventArgs args)
+    {
+        if (!double.TryParse(
+                args.Value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double value))
+        {
+            return;
+        }
+
+        double clamped = Math.Clamp(
+            value,
+            ControllerConfiguration.DewHeaterRampMinimum,
+            ControllerConfiguration.DewHeaterRampMaximum);
+
+        if (zero)
+        {
+            _zeros[slot.Slot] = clamped;
+        }
+        else
+        {
+            _spans[slot.Slot] = clamped;
+        }
+    }
+
+    private Task SetValueAsync(FeatureSlot slot, int value) =>
+        RunAsync(
+            async token =>
+            {
+                await Session.Configuration.WriteFeatureValueAsync(slot.Slot, value, token);
+
+                await RereadAsync(slot, token);
+            },
+            $"Slot {slot.Slot} set.");
+
+    /// <summary>
+    /// Applies both ramp temperatures and then reads the slot back.
+    /// </summary>
+    /// <remarks>
+    /// The read back is not a nicety. The controller keeps the ramp start strictly below its
+    /// end and quietly moves whichever value it has to, so the number it kept is often not the
+    /// number that was sent, and showing what was typed would be showing a fiction.
+    /// </remarks>
+    private Task ApplyRampAsync(FeatureSlot slot) =>
+        RunAsync(
+            async token =>
+            {
+                if (_zeros.TryGetValue(slot.Slot, out double zero))
+                {
+                    await Session.Configuration.WriteDewHeaterZeroAsync(slot.Slot, zero, token);
+                }
+
+                if (_spans.TryGetValue(slot.Slot, out double span))
+                {
+                    await Session.Configuration.WriteDewHeaterSpanAsync(slot.Slot, span, token);
+                }
+
+                await RereadAsync(slot, token);
+            },
+            "Ramp written to the controller, and read back below.");
+
+    private async Task RereadAsync(FeatureSlot slot, CancellationToken token)
+    {
+        FeatureState? state = await Session.Configuration
+            .ReadFeatureStateAsync(slot.Slot, slot.Purpose, token);
+
+        if (state is null)
+        {
+            return;
+        }
+
+        Dictionary<int, FeatureState> states = new(_states) { [slot.Slot] = state };
+        _states = states;
+
+        SeedEditors();
+    }
+
+    private static string SlotTitle(FeatureSlot slot) =>
+        $"{slot.Slot}. {(string.IsNullOrWhiteSpace(slot.Name) ? "unnamed" : slot.Name)}";
+
+    private static string SlotDescription(FeatureSlot slot) => slot.Purpose switch
+    {
+        FeaturePurpose.Switch or FeaturePurpose.MomentarySwitch or FeaturePurpose.CoverSwitch =>
+            "An on and off switch. The controller reports a momentary and a cover switch as a "
+            + "plain one, so this page cannot tell you which of the three it really is.",
+
+        FeaturePurpose.AnalogOutput =>
+            "A pulse width modulated output, offered to clients as a switch with a range.",
+
+        FeaturePurpose.DewHeater =>
+            "A dew heater. The controller runs the power ramp itself from the two temperatures "
+            + "below, and clients only get to start and stop it.",
+
+        FeaturePurpose.Intervalometer =>
+            "A camera shutter release. Read only here, and not offered to clients.",
+
+        FeaturePurpose.HiddenSwitch =>
+            "A pin held from boot. Not offered to clients, and not readable at all.",
+
+        _ => "The controller reported a purpose this driver does not recognise.",
+    };
+
+    private static string Degrees(double? value) =>
+        value is { } number
+            ? number.ToString("0.0", CultureInfo.InvariantCulture) + " degrees"
+            : "not reported";
+
+    private static string Seconds(double? value) =>
+        value is { } number
+            ? number.ToString("0.###", CultureInfo.InvariantCulture) + " s"
+            : "not reported";
+
+    private static string Count(int? value) =>
+        value?.ToString(CultureInfo.InvariantCulture) ?? "not reported";
+
+    private static string Percent(int level) =>
+        (level * 100.0 / ControllerConfiguration.FeatureValueMaximum)
+            .ToString("0", CultureInfo.InvariantCulture);
+}
