@@ -1,0 +1,280 @@
+@page "/diagnostics"
+@using OnStepX.Core.Configuration
+@using OnStepX.Core.Protocol
+@inherits SetupPageBase
+
+<h1>Diagnostics</h1>
+<p class="lead">
+    Read only telemetry, for working out why something is not behaving. Each section is read
+    on demand rather than all at once: a full pass is dozens of commands queued behind the
+    polling loop, which is instant against the simulator and several seconds on a real serial
+    link.
+</p>
+
+@if (Status is not null)
+{
+    <section class="card">
+        <p class="notice @(Failed ? "notice-error" : "notice-ok")">@Status</p>
+    </section>
+}
+
+<FirmwareCard Title="Firmware" Busy="Busy" Loaded="@(_identity is not null)"
+              Description="@FirmwareDescription"
+              NotLoadedText="Not read yet.">
+    <Actions>
+        <button class="small" @onclick="ReadFirmwareAsync" disabled="@Busy">Read</button>
+    </Actions>
+    <ChildContent>
+        <dl>
+            @foreach (KeyValuePair<string, string> item in _identity!)
+            {
+                <dt>@item.Key</dt>
+                <dd>@item.Value</dd>
+            }
+        </dl>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Axes" Busy="Busy" Loaded="@(_diagnostics is not null)"
+              Description="@AxesDescription"
+              NotLoadedText="Not read yet.">
+    <Actions>
+        <button class="small" @onclick="ReadDiagnosticsAsync" disabled="@Busy">Read</button>
+    </Actions>
+    <ChildContent>
+        <dl>
+            <dt>Mount type</dt>
+            <dd>@Display.Text(Telemetry.MountType)</dd>
+
+            <dt>Coordinate mode</dt>
+            <dd>@Display.Integer(Telemetry.CoordinateMode)</dd>
+        </dl>
+
+        <h3>Per axis</h3>
+        <div class="scroll-x">
+            <table>
+                <thead>
+                    <tr>
+                        <th></th>
+                        <th>Axis 1</th>
+                        <th>Axis 2</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Instrument angle</td>
+                        <td class="numeric">@Display.Number(Telemetry.Axis1InstrumentDegrees, "0.0000", "deg")</td>
+                        <td class="numeric">@Display.Number(Telemetry.Axis2InstrumentDegrees, "0.0000", "deg")</td>
+                    </tr>
+                    <tr>
+                        <td>Encoder count</td>
+                        <td class="numeric">@Display.Integer(Telemetry.Axis1EncoderCount)</td>
+                        <td class="numeric">@Display.Integer(Telemetry.Axis2EncoderCount)</td>
+                    </tr>
+                    <tr>
+                        <td>Steps per degree</td>
+                        <td class="numeric">@Display.Number(Telemetry.Axis1StepsPerDegree, "0.###")</td>
+                        <td class="numeric">@Display.Number(Telemetry.Axis2StepsPerDegree, "0.###")</td>
+                    </tr>
+                    <tr>
+                        <td>Step frequency</td>
+                        <td class="numeric">@Display.Number(Telemetry.Axis1StepFrequency, "0.000", "steps/s")</td>
+                        <td class="numeric">@Display.Number(Telemetry.Axis2StepFrequency, "0.000", "steps/s")</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h3>Stepper drivers</h3>
+        @if (Telemetry.DriverStatus.Count == 0)
+        {
+            <p class="muted">
+                Neither axis reports driver status. A plain step and direction driver has no
+                way to report anything, so this is normal on simpler hardware rather than a
+                fault.
+            </p>
+        }
+        else
+        {
+            <dl>
+                @foreach (AxisDriverStatus driver in Telemetry.DriverStatus)
+                {
+                    <dt>Axis @driver.Axis</dt>
+                    <dd class="@(driver.HasFault ? "error" : null)">
+                        @string.Join(", ", driver.Flags)
+                        @if (driver.HasFault)
+                        {
+                            <span> - see the flag meanings below</span>
+                        }
+                    </dd>
+                }
+            </dl>
+
+            @if (Telemetry.DriverStatus.Any(d => d.HasFault))
+            {
+                <p class="notice notice-warn">
+                    <code>ST</code> alone means standstill and is not a problem. Anything else
+                    is: <code>OA</code> and <code>OB</code> are an open load on that coil,
+                    <code>GA</code> and <code>GB</code> a short to ground, <code>OT</code>
+                    over temperature, <code>PW</code> an over temperature warning, and
+                    <code>GF</code> a driver fault. An open load usually means a motor cable.
+                </p>
+            }
+        }
+
+        <h3>StallGuard</h3>
+        @if (Telemetry.StallGuard.Count == 0)
+        {
+            <p class="muted">No axis reports StallGuard telemetry in this build.</p>
+        }
+        else
+        {
+            <div class="scroll-x">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Axis</th>
+                            <th>Reading</th>
+                            <th>Trip level</th>
+                            <th>Time below</th>
+                            <th>Armed</th>
+                            <th>Latched</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (StallGuardStatus stall in Telemetry.StallGuard)
+                        {
+                            <tr>
+                                <td>@stall.Axis</td>
+                                <td class="numeric">@stall.Value</td>
+                                <td class="numeric">@stall.TripLevel</td>
+                                <td class="numeric">@stall.BadMilliseconds ms</td>
+                                <td>@Display.YesNo(stall.Armed)</td>
+                                <td class="@(stall.Latched ? "error" : null)">
+                                    @Display.YesNo(stall.Latched)
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <p class="card-note">
+                A reading that falls towards the trip level means the motor is working harder,
+                so watching it while slewing is the cheapest way to find a stiff bearing or a
+                mount that is out of balance.
+            </p>
+        }
+
+        <h3>Controller</h3>
+        <dl>
+            <dt>Microcontroller temperature</dt>
+            <dd class="numeric">@Display.Number(Telemetry.McuTemperature, "0.#", "C")</dd>
+
+            <dt>Last command error</dt>
+            <dd class="@(Telemetry.LastError == CommandError.None ? null : "error")">
+                @Telemetry.LastError.Describe()
+            </dd>
+        </dl>
+    </ChildContent>
+</FirmwareCard>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Driver state</h2>
+            <p>
+                Counters from this process. No traffic to the controller, so this is always
+                available.
+            </p>
+        </div>
+    </div>
+
+    <dl>
+        <dt>Connection</dt>
+        <dd>@ServerRuntime.Connection.State</dd>
+
+        <dt>Devices holding the port</dt>
+        <dd>@DeviceList</dd>
+
+        <dt>Transport</dt>
+        <dd>@TransportDescription</dd>
+
+        <dt>Controller</dt>
+        <dd>@(SetupSession.Identity?.ToString() ?? "not connected")</dd>
+
+        <dt>Transactions</dt>
+        <dd class="numeric">@Transactions</dd>
+
+        <dt>Retries</dt>
+        <dd class="numeric">@Retries</dd>
+
+        @if (ServerRuntime.Connection.LastError is { } error)
+        {
+            <dt>Last connection error</dt>
+            <dd class="error">@error</dd>
+        }
+    </dl>
+
+    <p class="card-note">
+        Retries climbing while the driver is otherwise working is the signature of a marginal
+        cable or a baud rate the link cannot really sustain. They are counted since the
+        channel was opened, so they reset on every reconnection.
+    </p>
+</section>
+
+@code {
+    private const string FirmwareDescription =
+        "What the controller says it is. Worth having when reporting a problem, since firmware "
+        + "behaviour varies between builds of the same version.";
+
+    private const string AxesDescription =
+        "Mechanical angles, encoders, and whatever the stepper drivers are willing to report. "
+        + "Read on demand, because probing an axis that does not exist costs one expired "
+        + "deadline.";
+
+    private IReadOnlyDictionary<string, string>? _identity;
+    private ControllerDiagnostics? _diagnostics;
+
+    private ControllerDiagnostics Telemetry => _diagnostics ?? new ControllerDiagnostics();
+
+    private string DeviceList =>
+        ServerRuntime.Connection.ConnectedDevices.Count == 0
+            ? "none"
+            : string.Join(", ", ServerRuntime.Connection.ConnectedDevices);
+
+    private string TransportDescription =>
+        ServerRuntime.Connection.IsConnected
+            ? ServerRuntime.Connection.Channel.Transport.Description
+            : "not open";
+
+    /// <summary>
+    /// Transactions on the channel currently open.
+    /// </summary>
+    /// <remarks>
+    /// The counters belong to the channel, so they go when it closes. Saying so beats showing
+    /// a zero, which would read as "no traffic" when the truth is "nothing to count yet". They
+    /// are worth watching while a client is connected, which is when the channel stays open.
+    /// </remarks>
+    private string Transactions =>
+        ServerRuntime.Connection.IsConnected
+            ? ServerRuntime.Connection.Channel.TransactionCount.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)
+            : "channel closed";
+
+    private string Retries =>
+        ServerRuntime.Connection.IsConnected
+            ? ServerRuntime.Connection.Channel.RetryCount.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)
+            : "channel closed";
+
+    private Task ReadFirmwareAsync() =>
+        RunAsync(
+            async token => _identity = await Session.Configuration.ReadFirmwareIdentityAsync(token),
+            "Firmware identity read.");
+
+    private Task ReadDiagnosticsAsync() =>
+        RunAsync(
+            async token => _diagnostics = await Session.Configuration.ReadDiagnosticsAsync(
+                axes: null, token),
+            "Axis telemetry read.");
+}

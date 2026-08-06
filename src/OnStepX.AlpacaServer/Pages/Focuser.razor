@@ -1,0 +1,338 @@
+@page "/focuser"
+@using OnStepX.Core.Configuration
+@using System.Globalization
+@inherits SetupPageBase
+
+<h1>Focuser</h1>
+<p class="lead">
+    Travel, motion and temperature compensation of the active focuser. Every position,
+    limit, backlash and deadband on this page is a count of steps, which is what the ASCOM
+    focuser interface itself expects. Microns per step is shown only so a step count can be
+    related to a physical distance, using it to convert a position would be wrong by that
+    factor. The driver's own settings are further down, and those only take effect when
+    saved.
+</p>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Controller values</h2>
+            <p>
+                Read once and then edited section by section, so a slow serial link is paid
+                for once rather than on every keystroke.
+            </p>
+        </div>
+        <div class="actions actions-inline">
+            <button @onclick="ReadAllAsync" disabled="@Busy">
+                @(Busy ? "Working..." : "Read from controller")
+            </button>
+        </div>
+    </div>
+
+    @if (Status is not null)
+    {
+        <p class="notice @(Failed ? "notice-error" : "notice-ok")">@Status</p>
+    }
+
+    @if (_config is null && !Busy)
+    {
+        <p class="muted">Nothing read yet.</p>
+    }
+</section>
+
+<FirmwareCard Title="Travel" Busy="Busy" Loaded="@Loaded" Description="@TravelDescription">
+    <ChildContent>
+        <dl>
+            <dt>Active focuser</dt>
+            <dd class="numeric">@Display.Integer(State.ActiveFocuser)</dd>
+
+            <dt>Focuser present</dt>
+            <dd>@Display.YesNo(State.IsPresent)</dd>
+
+            <dt>Minimum position</dt>
+            <dd class="numeric">@Display.Integer(State.MinimumSteps, "steps")</dd>
+
+            <dt>Current position</dt>
+            <dd class="numeric">@Display.Integer(State.PositionSteps, "steps")</dd>
+
+            <dt>Maximum position</dt>
+            <dd class="numeric">@Display.Integer(State.MaximumSteps, "steps")</dd>
+
+            <dt>Microns per step</dt>
+            <dd class="numeric">@Display.Number(State.MicronsPerStep, "0.###", "microns")</dd>
+
+            <dt>Working move rate</dt>
+            <dd class="numeric">
+                @Display.Integer(State.WorkingRateMicronsPerSecond, "microns/second")
+            </dd>
+        </dl>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Position" Busy="Busy" Loaded="@Loaded" Description="@PositionDescription">
+    <Actions>
+        <button class="small" @onclick="GoHomeAsync" disabled="@Busy">Go home</button>
+        <button class="secondary small" @onclick="HaltAsync" disabled="@Busy">Halt</button>
+    </Actions>
+    <ChildContent>
+        <Field Label="Set current position as zero"
+               Hint="Only correct with the focuser at the position that should read zero.">
+            <ConfirmAction Label="Set as zero" Word="ZERO" Disabled="@Busy"
+                           Consequence="@SetZeroConsequence" OnConfirmed="SetZeroAsync" />
+        </Field>
+
+        <Field Label="Set current position as home"
+               Hint="Only correct with the focuser at the position it should return to on a go home.">
+            <ConfirmAction Label="Set as home" Word="HOME" Disabled="@Busy"
+                           Consequence="@SetHomeConsequence" OnConfirmed="SetHomeAsync" />
+        </Field>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Motion" Busy="Busy" Loaded="@Loaded" Description="@MotionDescription">
+    <Actions>
+        <button class="small" @onclick="ApplyMotionAsync" disabled="@Busy">Apply</button>
+    </Actions>
+    <ChildContent>
+        <Field Label="Backlash" For="fbacklash" Unit="steps"
+               Hint="Slack taken up when the focuser reverses direction.">
+            <input id="fbacklash" type="number" step="1" min="0" max="32767"
+                   @bind="_backlashSteps" />
+        </Field>
+
+        <Field Label="Deadband" For="fdeadband" Unit="steps"
+               Hint="How far the temperature has to drift before compensation moves the focuser again.">
+            <input id="fdeadband" type="number" step="1" min="0" max="32767"
+                   @bind="_deadbandSteps" />
+        </Field>
+
+        <dl>
+            <dt>Driven as a DC motor</dt>
+            <dd>@Display.YesNo(State.IsDcMotor)</dd>
+        </dl>
+
+        <Field Label="DC motor power" For="fdcpower" Unit="percent" Hint="@DcPowerHint">
+            <input id="fdcpower" type="number" step="1" min="0" max="100"
+                   @bind="_dcPowerPercent" />
+        </Field>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Temperature compensation" Busy="Busy" Loaded="@Loaded"
+              Description="@TemperatureDescription">
+    <Actions>
+        <button class="small" @onclick="ApplyTemperatureCompensationAsync" disabled="@Busy">
+            Apply
+        </button>
+    </Actions>
+    <ChildContent>
+        <Field Label="Enabled"
+               Hint="Moving the focuser with compensation left on is fine. From ASCOM interface version 3 onward a client is explicitly allowed to move while it is active.">
+            <div class="check">
+                <input id="ftempcomp" type="checkbox" @bind="_temperatureCompensationEnabled" />
+                <label for="ftempcomp">Compensate for temperature</label>
+            </div>
+        </Field>
+
+        <Field Label="Coefficient" For="fcoeff" Unit="microns per degree"
+               Hint="The physical drift of the focal plane per degree, measured rather than calculated.">
+            <input id="fcoeff" type="number" step="any" min="-999" max="999"
+                   @bind="_coefficient" />
+        </Field>
+
+        <dl>
+            <dt>Temperature</dt>
+            <dd class="numeric">@Display.Number(State.Temperature, "0.#", "degrees")</dd>
+
+            <dt>Temperature delta from baseline</dt>
+            <dd class="numeric">@Display.Number(State.TemperatureDelta, "0.#", "degrees")</dd>
+
+            <dt>Compensation, derived</dt>
+            <dd class="numeric">@CompensationMicronsText</dd>
+        </dl>
+    </ChildContent>
+</FirmwareCard>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Driver settings</h2>
+            <p>
+                Applied when the driver connects. These are driver settings, the controller
+                neither stores nor needs them.
+            </p>
+        </div>
+    </div>
+
+    <Field Label="Focuser selection" For="fnum" Unit="1 to 6" Hint="@FocuserNumberHint">
+        <select id="fnum" @bind="Working.Focuser.FocuserNumber">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+        </select>
+    </Field>
+
+    <Field Label="Move to position on connect"
+           Hint="Off by default: a focuser that moves right after connecting surprises some clients and can interfere with conformance checks.">
+        <div class="check">
+            <input id="fmoveonconnect" type="checkbox"
+                   @bind="Working.Focuser.MoveToPositionOnConnect" />
+            <label for="fmoveonconnect">Move to a target position on connect</label>
+        </div>
+    </Field>
+
+    <Field Label="Target position" For="fposonconnect" Unit="steps">
+        <input id="fposonconnect" type="number" step="1"
+               @bind="Working.Focuser.PositionOnConnect" />
+    </Field>
+</section>
+
+<SaveBar IsDirty="IsDirty" Status="@SaveStatus" Failed="SaveFailed"
+         OnSave="Save" OnRevert="Revert" />
+
+@code {
+    private FocuserConfiguration? _config;
+
+    // Editable copies of the firmware values, refilled on every read.
+    private long _backlashSteps;
+    private long _deadbandSteps;
+    private int _dcPowerPercent;
+    private bool _temperatureCompensationEnabled;
+    private double _coefficient;
+
+    private bool Loaded => _config is not null;
+
+    // An empty record means "not read yet", and every field inside it reports itself as
+    // unsupported, which is exactly what should be shown.
+    private FocuserConfiguration State => _config ?? new FocuserConfiguration();
+
+    private const string TravelDescription =
+        "Positions, limits and the working move rate as the controller counts them, in "
+        + "steps. Microns per step is for display only.";
+
+    private const string PositionDescription =
+        "Moves the focuser to its reference position, or replaces the reference itself.";
+
+    private const string MotionDescription =
+        "Backlash and deadband are both step counts. DC motor power only matters on a "
+        + "focuser driven as a DC motor.";
+
+    private const string TemperatureDescription =
+        "Lets the controller nudge focus to follow temperature between manual refocusing "
+        + "runs.";
+
+    private const string SetZeroConsequence =
+        "Declares the current focuser position to be step zero. Every position and limit "
+        + "recorded before this loses its meaning until the focuser is recalibrated.";
+
+    private const string SetHomeConsequence =
+        "Declares the current focuser position to be home. A future go home returns here "
+        + "rather than to wherever home actually is, until this is set again.";
+
+    // The active focuser is only mentioned once it has actually been read. Interpolating it
+    // unconditionally produced "focuser not supported active" on a page nobody had read yet,
+    // which reads as a fault rather than as "ask the controller first".
+    private string FocuserNumberHint =>
+        (State.ActiveFocuser.IsSupported
+            ? $"The controller currently has focuser {State.ActiveFocuser.Value} active. "
+            : string.Empty)
+        + "This setting is applied only when the driver connects. It does not switch the "
+        + "active focuser live, because that would silently redirect a connected client's "
+        + "focuser to different hardware.";
+
+    private string DcPowerHint =>
+        "Applies only to a focuser driven as a DC motor"
+        + (State.IsDcMotor.IsSupported
+            ? State.IsDcMotor.Value ? ", which this one is." : ", which this one is not."
+            : ".");
+
+    private string CompensationMicronsText =>
+        State.CompensationMicrons is { } microns
+            ? microns.ToString("0.###", CultureInfo.InvariantCulture) + " microns"
+            : Display.NotSupported;
+
+    private Task ReadAllAsync() =>
+        RunAsync(
+            async token =>
+            {
+                _config = await Session.Configuration.ReadFocuserAsync(token);
+                Adopt(_config);
+            },
+            "Read from the controller.");
+
+    /// <summary>
+    /// Copies what the controller reported into the editable fields, leaving anything it
+    /// does not support at whatever was there, so the form never shows a misleading zero.
+    /// </summary>
+    private void Adopt(FocuserConfiguration config)
+    {
+        if (config.BacklashSteps.IsSupported) _backlashSteps = config.BacklashSteps.Value;
+        if (config.DeadbandSteps.IsSupported) _deadbandSteps = config.DeadbandSteps.Value;
+
+        if (config.DcMotorPowerPercent.IsSupported)
+        {
+            _dcPowerPercent = config.DcMotorPowerPercent.Value;
+        }
+
+        if (config.TemperatureCompensation.IsSupported)
+        {
+            _temperatureCompensationEnabled = config.TemperatureCompensation.Value;
+        }
+
+        if (config.Coefficient.IsSupported) _coefficient = config.Coefficient.Value;
+    }
+
+    /// <summary>
+    /// Applies a section and then reads everything back, so the page shows what the
+    /// controller ended up with rather than what was typed.
+    /// </summary>
+    private Task ApplyAsync(Func<CancellationToken, Task> apply, string success) =>
+        RunAsync(
+            async token =>
+            {
+                await apply(token);
+
+                _config = await Session.Configuration.ReadFocuserAsync(token);
+                Adopt(_config);
+            },
+            success);
+
+    private Task GoHomeAsync() =>
+        ApplyAsync(token => Session.Configuration.FocuserGoHomeAsync(token), "Focuser homing.");
+
+    private Task HaltAsync() =>
+        ApplyAsync(token => Session.Configuration.FocuserHaltAsync(token), "Focuser halted.");
+
+    private Task SetZeroAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.FocuserSetZeroAsync(token),
+            "Current position set as zero.");
+
+    private Task SetHomeAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.FocuserSetHomeAsync(token),
+            "Current position set as home.");
+
+    private Task ApplyMotionAsync() =>
+        ApplyAsync(
+            async token =>
+            {
+                await Session.Configuration.WriteFocuserBacklashAsync(_backlashSteps, token);
+                await Session.Configuration.WriteFocuserDeadbandAsync(_deadbandSteps, token);
+                await Session.Configuration.WriteFocuserDcPowerAsync(_dcPowerPercent, token);
+            },
+            "Motion settings written.");
+
+    private Task ApplyTemperatureCompensationAsync() =>
+        ApplyAsync(
+            async token =>
+            {
+                await Session.Configuration.WriteFocuserTemperatureCompensationAsync(
+                    _temperatureCompensationEnabled, token);
+                await Session.Configuration.WriteFocuserCoefficientAsync(_coefficient, token);
+            },
+            "Temperature compensation written.");
+}

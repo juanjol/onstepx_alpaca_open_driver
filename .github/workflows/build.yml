@@ -1,0 +1,133 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+
+jobs:
+
+  # Compila y testea todo lo multiplataforma, y publica los binarios de
+  # Linux y Raspberry Pi. El shim COM queda fuera porque es net48.
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore OnStepX.CrossPlatform.slnf
+
+      - name: Build
+        run: dotnet build OnStepX.CrossPlatform.slnf -c Release --no-restore
+
+      - name: Test
+        run: dotnet test OnStepX.CrossPlatform.slnf -c Release --no-build --logger "trx;LogFileName=results.trx" --results-directory artifacts/test-results
+
+      - name: Publish linux-x64
+        run: dotnet publish src/OnStepX.AlpacaServer -c Release -r linux-x64 --self-contained true -o artifacts/linux-x64
+
+      - name: Publish linux-arm64
+        run: dotnet publish src/OnStepX.AlpacaServer -c Release -r linux-arm64 --self-contained true -o artifacts/linux-arm64
+
+      - name: Package linux tarballs
+        run: |
+          mkdir -p artifacts/packages
+          for rid in linux-x64 linux-arm64; do
+            if [ -f packaging/linux/onstepx-alpaca.service ]; then
+              cp packaging/linux/onstepx-alpaca.service "artifacts/$rid/"
+            fi
+            tar -czf "artifacts/packages/onstepx-alpaca-$rid.tar.gz" -C "artifacts/$rid" .
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: artifacts/packages/
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: artifacts/test-results/
+
+  # Compila la solucion completa, shim COM net48 incluido, y genera el
+  # instalable. Inno Setup 6 ya viene en la imagen windows-latest.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore OnStepX.Ascom.sln
+
+      - name: Build solucion completa
+        run: dotnet build OnStepX.Ascom.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test tests/OnStepX.Core.Tests -c Release --no-build
+
+      - name: Publish servidor Alpaca win-x64
+        run: dotnet publish src/OnStepX.AlpacaServer -c Release -r win-x64 --self-contained true -o artifacts/win-x64
+
+      # El .iss llega en la fase 11. Hasta entonces este paso se salta
+      # en lugar de romper el CI.
+      - name: Comprobar si hay instalador
+        id: installer
+        shell: bash
+        run: |
+          if [ -f installer/OnStepX.Ascom.iss ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "installer/OnStepX.Ascom.iss todavia no existe, se omite ISCC"
+          fi
+
+      - name: Construir instalador con Inno Setup
+        if: steps.installer.outputs.present == 'true'
+        run: iscc /Qp installer\OnStepX.Ascom.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: artifacts/win-x64/
+
+      - uses: actions/upload-artifact@v4
+        if: steps.installer.outputs.present == 'true'
+        with:
+          name: windows-installer
+          path: installer/Output/
+
+  # Publica en release al empujar un tag vX.Y.Z
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/linux-packages/*
+            dist/windows-installer/*
+          generate_release_notes: true

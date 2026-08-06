@@ -1,0 +1,496 @@
+@page "/connection"
+@using OnStepX.Core.Discovery
+@using OnStepX.Core.Hardware
+@inherits SetupPageBase
+
+<h1>Connection</h1>
+<p class="lead">
+    How the driver reaches the controller. These are driver settings, so they take effect on
+    the next connection and never interrupt a client that is already working.
+</p>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Transport</h2>
+            <p>A serial port with autodiscovery, a network address, or the built in simulator.</p>
+        </div>
+    </div>
+
+    <Field Label="Transport" For="transport"
+           Hint="The simulator answers the whole command set with no mount attached. It is
+                 what makes conformance checking possible on any machine, and it is not a
+                 substitute for testing against the real mount.">
+        <select id="transport" @bind="Working.Connection.Kind">
+            <option value="@TransportKind.Serial">Serial port</option>
+            <option value="@TransportKind.Tcp">Network, TCP</option>
+            <option value="@TransportKind.Simulated">Simulator, no hardware</option>
+        </select>
+    </Field>
+
+    @if (Working.Connection.Kind == TransportKind.Serial)
+    {
+        <Field Label="Port" For="port" Unit="@PortHint">
+            <input id="port" type="text" @bind="Working.Connection.PortName"
+                   placeholder="@(OperatingSystem.IsWindows() ? "COM3" : "/dev/ttyUSB0")" />
+        </Field>
+
+        <Field Label="Baud rate" For="baud"
+               Hint="OnStepX defaults to 9600 on its serial connector. The WiFi and
+                     Bluetooth addons often run faster.">
+            <select id="baud" @bind="Working.Connection.BaudRate">
+                @foreach (int rate in BaudRates)
+                {
+                    <option value="@rate">@rate</option>
+                }
+            </select>
+        </Field>
+
+        <Field Label="Find the port automatically"
+               Hint="The configured port is tried first and the rest are scanned only if it
+                     does not answer. With no port configured this applies regardless,
+                     because there is nothing else to try.">
+            <div class="check">
+                <input id="autoport" type="checkbox" @bind="Working.Connection.AutoDiscoverPort" />
+                <label for="autoport">Search on connect</label>
+            </div>
+        </Field>
+    }
+    else if (Working.Connection.Kind == TransportKind.Tcp)
+    {
+        <Field Label="Host or address" For="host">
+            <input id="host" type="text" @bind="Working.Connection.Host" />
+        </Field>
+
+        <Field Label="Port" For="tcpport"
+               Hint="The OnStep WiFi addon listens on 9999 by default.">
+            <input id="tcpport" type="number" min="1" max="65535"
+                   @bind="Working.Connection.TcpPort" />
+        </Field>
+    }
+</section>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Command channel</h2>
+            <p>How long to wait, how hard to retry, and how often to poll.</p>
+        </div>
+    </div>
+
+    <Field Label="Timeout" For="timeout"
+           Hint="Deadline for one command. Raise it on a slow radio link or a long cable. A
+                 value under about 500 ms leaves no margin at 9600 baud.">
+        <input id="timeout" type="range" min="200" max="5000" step="100"
+               @bind="Working.Connection.TimeoutMilliseconds" @bind:event="oninput" />
+        <strong>@Working.Connection.TimeoutMilliseconds ms</strong>
+    </Field>
+
+    <Field Label="Error correction"
+           Hint="Detects corruption on a noisy line, and has a second benefit: with it on
+                 the firmware answers every command and always terminates its reply, which
+                 removes the ambiguity of reading a command that normally answers nothing.
+                 Leave it on unless something on the link cannot cope with it.">
+        <div class="check">
+            <input id="checksum" type="checkbox" @bind="Working.Connection.UseErrorCorrection" />
+            <label for="checksum">Frame commands with a checksum</label>
+        </div>
+    </Field>
+
+    <Field Label="Retries" For="retries"
+           Hint="Retries apply to a timeout, a bad checksum, or a reply that arrived out of
+                 sequence. A command the firmware does not implement is never retried,
+                 because it will not start existing on the second attempt.">
+        <input id="retries" type="number" min="0" max="5" @bind="Working.Connection.MaxRetries" />
+    </Field>
+
+    <Field Label="Poll interval" For="poll" Unit="ms"
+           Hint="One poll cycle is several commands, which at 9600 baud already costs around
+                 110 ms, so polling much faster than 250 ms saturates the port and leaves no
+                 room for the commands a client actually wants to send. It also bounds how
+                 stale a coordinate read can be.">
+        <input id="poll" type="number" min="100" max="5000" step="50"
+               @bind="Working.Connection.PollIntervalMilliseconds" />
+    </Field>
+
+    <Field Label="Command trace"
+           Hint="Verbose. Turn it on to diagnose a problem, and off again afterwards.">
+        <div class="check">
+            <input id="trace" type="checkbox" @bind="Working.TraceEnabled" />
+            <label for="trace">Log every command and reply</label>
+        </div>
+    </Field>
+</section>
+
+<SaveBar IsDirty="IsDirty" Status="@SaveStatus" Failed="SaveFailed"
+         OnSave="Save" OnRevert="Revert" />
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Find the controller</h2>
+            <p>
+                Opens each candidate port in turn and asks it for its product name and
+                firmware version, which are safe to send even to a mount that is moving.
+            </p>
+        </div>
+        <div class="actions actions-inline">
+            @if (_discovering)
+            {
+                <button class="secondary" @onclick="CancelDiscovery">Stop</button>
+            }
+            else
+            {
+                <button @onclick="DiscoverAsync" disabled="@(!CanDiscover)">Scan ports</button>
+            }
+            <button class="secondary" @onclick="TestConnectionAsync" disabled="@Busy">
+                Test connection
+            </button>
+        </div>
+    </div>
+
+    @if (Status is not null)
+    {
+        <p class="notice @(Failed ? "notice-error" : "notice-ok")">@Status</p>
+    }
+
+    @if (SetupSession.IsClientConnected)
+    {
+        <p class="notice notice-warn">
+            A client is connected, so scanning is disabled. Discovery opens serial ports one
+            by one and one of them is the port in use, which would interrupt whatever is
+            running. Disconnect the client first.
+        </p>
+    }
+
+    @if (_discovering || _progress is not null)
+    {
+        <div class="progress-track">
+            <div class="progress-fill" style="width:@ProgressPercent%"></div>
+        </div>
+        <p class="status-line muted">@ProgressText</p>
+    }
+
+    @if (_found.Count > 0)
+    {
+        <ul class="result-list">
+            @foreach (DiscoveredController controller in _found)
+            {
+                <li>
+                    <span>
+                        <strong>@controller.PortName</strong>
+                        at @controller.BaudRate baud
+                        <span class="muted">@Describe(controller)</span>
+                    </span>
+                    <button class="small" @onclick="() => Use(controller)">Use this one</button>
+                </li>
+            }
+        </ul>
+    }
+    else if (_scanned && !_discovering)
+    {
+        <p class="muted">
+            No controller answered. Check that it is powered on and connected, that no other
+            program is holding the port, and that the baud rate matches.
+        </p>
+    }
+
+    @if (_ports.Count > 0)
+    {
+        <h3>Ports seen on this machine</h3>
+        <div class="scroll-x">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Port</th>
+                        <th>Name</th>
+                        <th>Vendor and product</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (SerialPortInfo port in _ports)
+                    {
+                        <tr>
+                            <td>@port.PortName</td>
+                            <td>@port.FriendlyName</td>
+                            <td class="numeric">@Identifiers(port)</td>
+                            <td class="muted">@Availability(port)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Current state</h2>
+            <p>What the shared connection is doing right now.</p>
+        </div>
+    </div>
+
+    <dl>
+        <dt>State</dt>
+        <dd>@ServerRuntime.Connection.State</dd>
+
+        <dt>Devices holding the port</dt>
+        <dd>
+            @if (ServerRuntime.Connection.ConnectedDevices.Count == 0)
+            {
+                <span class="muted">none</span>
+            }
+            else
+            {
+                @string.Join(", ", ServerRuntime.Connection.ConnectedDevices)
+            }
+        </dd>
+
+        @if (ServerRuntime.Connection.Identity is { } identity)
+        {
+            <dt>Controller</dt>
+            <dd>@identity</dd>
+
+            <dt>Reached over</dt>
+            <dd>@identity.TransportDescription</dd>
+
+            @if (identity.BuildDate is not null)
+            {
+                <dt>Firmware built</dt>
+                <dd>@identity.BuildDate</dd>
+            }
+        }
+
+        @if (ServerRuntime.Connection.LastError is { } error)
+        {
+            <dt>Last error</dt>
+            <dd class="error">@error</dd>
+        }
+    </dl>
+</section>
+
+@if (ServerRuntime.SettingsWarning is { } warning)
+{
+    <section class="card">
+        <h2>Settings warning</h2>
+        <p class="error">@warning</p>
+    </section>
+}
+
+@code {
+    private static readonly int[] BaudRates =
+        [9600, 19200, 38400, 57600, 115200, 230400, 460800];
+
+    private readonly List<DiscoveredController> _found = [];
+
+    private IReadOnlyList<SerialPortInfo> _ports = [];
+    private PortDiscoveryProgress? _progress;
+    private CancellationTokenSource? _discovery;
+    private bool _discovering;
+    private bool _scanned;
+
+    private string PortHint =>
+        Working.Connection.AutoDiscoverPort ? "tried first, then the others" : string.Empty;
+
+    /// <summary>
+    /// Scanning is only offered when nobody else is using the port, because discovery opens
+    /// ports and would interrupt them.
+    /// </summary>
+    private bool CanDiscover => !Busy && !_discovering && !SetupSession.IsClientConnected;
+
+    private int ProgressPercent =>
+        _progress is { PortsTotal: > 0 } progress
+            ? Math.Clamp(progress.PortsProcessed * 100 / progress.PortsTotal, 0, 100)
+            : 0;
+
+    private string ProgressText
+    {
+        get
+        {
+            if (_progress is not { } progress)
+            {
+                return "Starting...";
+            }
+
+            string text = $"{progress.PortsProcessed} of {progress.PortsTotal} ports";
+
+            if (progress.CurrentPort is not null)
+            {
+                text += $", trying {progress.CurrentPort}";
+
+                if (progress.CurrentBaudRate is { } baud)
+                {
+                    text += $" at {baud} baud";
+                }
+            }
+
+            return text;
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+
+        // Listing ports is a local enumeration that opens nothing, so it is safe on load.
+        _ports = SafeListPorts();
+    }
+
+    private async Task DiscoverAsync()
+    {
+        _found.Clear();
+        _progress = null;
+        _scanned = false;
+        _discovering = true;
+        Report(null, failed: false);
+
+        _discovery?.Dispose();
+        _discovery = new CancellationTokenSource();
+
+        var progress = new Progress<PortDiscoveryProgress>(report =>
+        {
+            _progress = report;
+
+            if (report.Found is { } controller && !_found.Contains(controller))
+            {
+                _found.Add(controller);
+            }
+
+            // Progress arrives on whatever thread the probe finished on, so the redraw has
+            // to be marshalled onto the circuit or the list silently never moves.
+            _ = RedrawAsync();
+        });
+
+        try
+        {
+            var options = new PortDiscoveryOptions
+            {
+                PreferredBaudRate = Working.Connection.BaudRate,
+                ProbeTimeout = TimeSpan.FromMilliseconds(
+                    Math.Clamp(Working.Connection.TimeoutMilliseconds, 200, 2000)),
+
+                // Report everything, so the user can choose when more than one answers.
+                StopAtFirstMatch = false,
+
+                // The probe runs before any channel exists, and a controller built without
+                // error correction would not answer a checksummed frame at all.
+                UseErrorCorrection = false,
+            };
+
+            IReadOnlyList<DiscoveredController> results = await new PortDiscovery()
+                .DiscoverAsync(options, progress, _discovery.Token);
+
+            _found.Clear();
+            _found.AddRange(results);
+
+            Report(
+                results.Count switch
+                {
+                    0 => "No controller answered on any port.",
+                    1 => "Found one controller.",
+                    _ => $"Found {results.Count} controllers. Pick the right one.",
+                },
+                failed: results.Count == 0);
+        }
+        catch (OperationCanceledException)
+        {
+            Report("Scan stopped.", failed: false);
+        }
+        catch (Exception ex)
+        {
+            Report($"The scan failed: {ex.Message}", failed: true);
+        }
+        finally
+        {
+            _discovering = false;
+            _scanned = true;
+            _ports = SafeListPorts();
+        }
+    }
+
+    private void CancelDiscovery() => _discovery?.Cancel();
+
+    private IReadOnlyList<SerialPortInfo> SafeListPorts()
+    {
+        try
+        {
+            return new PortDiscovery().ListPorts();
+        }
+        catch (Exception ex)
+        {
+            // Enumerating ports is a convenience. Failing at it must not stop the page from
+            // rendering, and on a locked down machine it can fail.
+            Report($"Could not list the serial ports: {ex.Message}", failed: true);
+            return _ports;
+        }
+    }
+
+    /// <summary>
+    /// Adopts a discovered controller. Saved straight away, because picking one from a list
+    /// is already a deliberate choice and leaving it unsaved invites connecting to the old
+    /// port by mistake.
+    /// </summary>
+    private void Use(DiscoveredController controller)
+    {
+        Working.Connection.Kind = TransportKind.Serial;
+        Working.Connection.PortName = controller.PortName;
+        Working.Connection.BaudRate = controller.BaudRate;
+
+        Save();
+
+        Report(
+            $"Using {controller.PortName} at {controller.BaudRate} baud. "
+            + "Reconnect the device for it to take effect.",
+            failed: false);
+    }
+
+    /// <summary>
+    /// Opens the connection, reads the controller identity and releases it again.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately uses the settings in force rather than the working copy, so what it
+    /// reports is what a client would actually get. Unsaved edits are not tested, which is
+    /// why this sits below the save bar.
+    /// </remarks>
+    private Task TestConnectionAsync() =>
+        RunAsync(_ =>
+        {
+            ControllerIdentity? identity = SetupSession.Identity;
+
+            Report(
+                identity is null
+                    ? "Connected, but the controller did not identify itself."
+                    : $"Connected to {identity} over {identity.TransportDescription}.",
+                failed: false);
+
+            return Task.CompletedTask;
+        });
+
+    private static string Describe(DiscoveredController controller)
+    {
+        string text = $"- {controller.ProductName} {controller.FirmwareVersion}";
+
+        return controller.FriendlyName is null ? text : $"{text} ({controller.FriendlyName})";
+    }
+
+    private static string Availability(SerialPortInfo port) =>
+        port.IsCandidate
+            ? $"candidate, priority {port.Priority}"
+            : $"skipped: {port.ExcludedReason}";
+
+    private static string Identifiers(SerialPortInfo port) =>
+        port.VendorId is { } vendor && port.ProductId is { } product
+            ? $"{vendor:x4}:{product:x4}"
+            : string.Empty;
+
+    public override void Dispose()
+    {
+        _discovery?.Cancel();
+        _discovery?.Dispose();
+        _discovery = null;
+
+        base.Dispose();
+    }
+}

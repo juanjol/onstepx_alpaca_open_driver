@@ -1,0 +1,40 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+publish/
+*.user
+*.suo
+*.userprefs
+
+# Rider / VS / VS Code
+.vs/
+.idea/
+.vscode/
+
+# NuGet
+*.nupkg
+packages/
+!packages/build/
+
+# Test results
+[Tt]est[Rr]esult*/
+*.trx
+coverage*.xml
+coverage*.json
+
+# Inno Setup output
+installer/Output/
+
+# Local runtime state
+*.log
+appsettings.Local.json
+
+# Local development tools. Conform Universal lives here and is not ours to ship.
+/tools/
+
+# Never committed
+.claude/
+CLAUDE.md

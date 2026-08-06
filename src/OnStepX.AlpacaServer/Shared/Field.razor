@@ -1,0 +1,46 @@
+@*
+    One labelled form row: label, control, optional unit, optional explanation.
+
+    The unit is its own slot rather than part of the label because it is the thing most
+    likely to be misread here. The focuser works in steps in some places and microns in
+    others, and the goto rate is a period in microseconds where a smaller number means a
+    faster slew, so every numeric field states its unit next to the box and not in prose
+    somewhere further up the page.
+*@
+
+<div class="field">
+    <label for="@For">@Label</label>
+    <div class="field-control">
+        @ChildContent
+        @if (!string.IsNullOrEmpty(Unit))
+        {
+            <span class="field-unit">@Unit</span>
+        }
+    </div>
+    @if (!string.IsNullOrEmpty(Hint))
+    {
+        <p class="field-hint">@Hint</p>
+    }
+</div>
+
+@code {
+    /// <summary>Field label.</summary>
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>Identifier of the control the label points at.</summary>
+    [Parameter]
+    public string? For { get; set; }
+
+    /// <summary>Unit, shown right after the control.</summary>
+    [Parameter]
+    public string? Unit { get; set; }
+
+    /// <summary>Explanation underneath, in plain text.</summary>
+    [Parameter]
+    public string? Hint { get; set; }
+
+    /// <summary>The control itself, plus anything shown beside it.</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

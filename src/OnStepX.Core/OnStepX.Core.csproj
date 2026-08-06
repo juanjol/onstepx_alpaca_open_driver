@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>OnStepX.Core</RootNamespace>
+    <Description>Protocolo LX200 extendido de OnStepX, transportes, autodescubrimiento de puerto y controladores de dispositivo. Sin dependencias de ASCOM.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Serie multiplataforma: COMn en Windows, /dev/tty* en Linux. -->
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Los tests necesitan ver algunos internals, en particular los validadores
+      de respuesta del autodescubrimiento, que son detalle de implementacion
+      pero conviene probar por separado porque son lo que evita los falsos
+      positivos.
+    -->
+    <InternalsVisibleTo Include="OnStepX.Core.Tests" />
+  </ItemGroup>
+
+</Project>

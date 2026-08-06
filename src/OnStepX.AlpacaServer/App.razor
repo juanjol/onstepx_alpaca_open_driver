@@ -1,0 +1,17 @@
+@*
+    Root component. The setup pages themselves arrive in phase 8; this is the
+    routing shell they plug into.
+*@
+<Router AppAssembly="@typeof(App).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)" />
+        <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+    </Found>
+    <NotFound>
+        <LayoutView Layout="@typeof(MainLayout)">
+            <h1>Page not found</h1>
+            <p>The address you asked for does not exist on this server.</p>
+            <p><a href="">Back to the dashboard</a></p>
+        </LayoutView>
+    </NotFound>
+</Router>

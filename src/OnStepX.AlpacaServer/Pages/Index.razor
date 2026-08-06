@@ -1,0 +1,177 @@
+@page "/"
+@using OnStepX.Core.Hardware
+@inherits SetupPageBase
+
+<h1>OnStepX ASCOM</h1>
+<p class="lead">
+    One Alpaca server for the mount, the focuser, the rotator and the environmental sensors,
+    all sharing a single connection to the controller.
+</p>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Connection</h2>
+            <p>
+                The port is opened by the first device that connects and closed by the last
+                one that leaves, so all four devices work over one serial port with no hub.
+            </p>
+        </div>
+        <div class="actions actions-inline">
+            <button @onclick="TestConnectionAsync" disabled="@Busy">
+                @(Busy ? "Working..." : "Test connection")
+            </button>
+        </div>
+    </div>
+
+    @if (Status is not null)
+    {
+        <p class="notice @(Failed ? "notice-error" : "notice-ok")">@Status</p>
+    }
+
+    <dl>
+        <dt>Transport</dt>
+        <dd>@TransportSummary</dd>
+
+        <dt>State</dt>
+        <dd>@ServerRuntime.Connection.State</dd>
+
+        <dt>Devices holding the port</dt>
+        <dd>@DeviceList</dd>
+
+        @if (SetupSession.Identity is { } identity)
+        {
+            <dt>Controller</dt>
+            <dd>@identity</dd>
+
+            <dt>Reached over</dt>
+            <dd>@identity.TransportDescription</dd>
+        }
+
+        @if (ServerRuntime.Connection.LastError is { } error)
+        {
+            <dt>Last error</dt>
+            <dd class="error">@error</dd>
+        }
+    </dl>
+</section>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Devices</h2>
+            <p>
+                Every device answers at device number zero, since there is only ever one mount
+                behind one controller.
+            </p>
+        </div>
+    </div>
+
+    <div class="scroll-x">
+        <table>
+            <thead>
+                <tr>
+                    <th>Device</th>
+                    <th>Interface</th>
+                    <th>Alpaca address</th>
+                    <th>Setup</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Telescope</td>
+                    <td>ITelescopeV4</td>
+                    <td><code>/api/v1/telescope/0</code></td>
+                    <td><a href="mount">Mount</a></td>
+                </tr>
+                <tr>
+                    <td>Focuser</td>
+                    <td>IFocuserV4</td>
+                    <td><code>/api/v1/focuser/0</code></td>
+                    <td><a href="focuser">Focuser</a></td>
+                </tr>
+                <tr>
+                    <td>Rotator</td>
+                    <td>IRotatorV4</td>
+                    <td><code>/api/v1/rotator/0</code></td>
+                    <td><a href="rotator">Rotator</a></td>
+                </tr>
+                <tr>
+                    <td>Observing conditions</td>
+                    <td>IObservingConditionsV2</td>
+                    <td><code>/api/v1/observingconditions/0</code></td>
+                    <td><a href="weather">Weather</a></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <p class="card-note">
+        Clients that speak Alpaca natively, such as NINA, find all four through discovery
+        without an address being typed anywhere.
+    </p>
+</section>
+
+@if (ServerRuntime.IsSimulated)
+{
+    <section class="card">
+        <h2>Simulated transport</h2>
+        <p class="notice notice-warn">
+            There is no real mount behind this server. The simulator answers the whole command
+            set, which is what allows conformance checking with no hardware, and it will
+            happily report a slew that never happened to anything mechanical. Switch the
+            transport on the connection page when you want the real controller.
+        </p>
+    </section>
+}
+
+@if (ServerRuntime.SettingsWarning is { } warning)
+{
+    <section class="card">
+        <h2>Settings warning</h2>
+        <p class="error">@warning</p>
+    </section>
+}
+
+@code {
+    private string TransportSummary
+    {
+        get
+        {
+            ConnectionSettings connection = ServerRuntime.Settings.Connection;
+
+            return connection.Kind switch
+            {
+                TransportKind.Serial =>
+                    string.IsNullOrWhiteSpace(connection.PortName)
+                        ? $"serial, port found automatically, {connection.BaudRate} baud"
+                        : $"serial, {connection.PortName} at {connection.BaudRate} baud",
+                TransportKind.Tcp => $"network, {connection.Host} port {connection.TcpPort}",
+                _ => "simulated",
+            };
+        }
+    }
+
+    private string DeviceList =>
+        ServerRuntime.Connection.ConnectedDevices.Count == 0
+            ? "none"
+            : string.Join(", ", ServerRuntime.Connection.ConnectedDevices);
+
+    /// <summary>
+    /// Opens the connection, reads the controller identity and releases it again. It borrows
+    /// the port under the setup key, so it cannot close a port a real client is holding.
+    /// </summary>
+    private Task TestConnectionAsync() =>
+        RunAsync(_ =>
+        {
+            ControllerIdentity? identity = SetupSession.Identity;
+
+            Report(
+                identity is null
+                    ? "Connected, but the controller did not identify itself."
+                    : $"Connected to {identity} over {identity.TransportDescription}.",
+                failed: false);
+
+            return Task.CompletedTask;
+        });
+}

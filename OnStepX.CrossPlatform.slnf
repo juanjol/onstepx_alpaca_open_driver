@@ -1,0 +1,11 @@
+{
+  "solution": {
+    "path": "OnStepX.Ascom.sln",
+    "projects": [
+      "src\\OnStepX.AlpacaServer\\OnStepX.AlpacaServer.csproj",
+      "src\\OnStepX.Core\\OnStepX.Core.csproj",
+      "src\\OnStepX.Devices\\OnStepX.Devices.csproj",
+      "tests\\OnStepX.Core.Tests\\OnStepX.Core.Tests.csproj"
+    ]
+  }
+}

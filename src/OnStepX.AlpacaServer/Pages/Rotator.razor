@@ -1,0 +1,302 @@
+@page "/rotator"
+@using OnStepX.Core.Configuration
+@inherits SetupPageBase
+
+<h1>Rotator</h1>
+<p class="lead">
+    Travel, movement and field derotation. The angle the firmware reports is always the
+    <strong>mechanical</strong> angle. The sky angle a client sees is that mechanical angle
+    plus the driver's sync offset, which is why the offset lives in the driver settings
+    below and not in the controller. The driver's own settings only take effect when saved.
+</p>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Controller values</h2>
+            <p>
+                Read once and then edited section by section, so a slow serial link is paid
+                for once rather than on every keystroke.
+            </p>
+        </div>
+        <div class="actions actions-inline">
+            <button @onclick="ReadAllAsync" disabled="@Busy">
+                @(Busy ? "Working..." : "Read from controller")
+            </button>
+        </div>
+    </div>
+
+    @if (Status is not null)
+    {
+        <p class="notice @(Failed ? "notice-error" : "notice-ok")">@Status</p>
+    }
+
+    @if (_config is null && !Busy)
+    {
+        <p class="muted">Nothing read yet.</p>
+    }
+</section>
+
+<FirmwareCard Title="Travel" Busy="Busy" Loaded="@Loaded" Description="@TravelDescription">
+    <ChildContent>
+        <dl>
+            <dt>Capability</dt>
+            <dd>@Display.Text(State.Capability)</dd>
+
+            <dt>Rotator present</dt>
+            <dd>@Display.YesNo(State.IsPresent)</dd>
+
+            <dt>Minimum angle</dt>
+            <dd class="numeric">@Display.Number(State.MinimumDegrees, "0.###", "degrees")</dd>
+
+            <dt>Maximum angle</dt>
+            <dd class="numeric">@Display.Number(State.MaximumDegrees, "0.###", "degrees")</dd>
+
+            <dt>Degrees per step</dt>
+            <dd class="numeric">@Display.Number(State.DegreesPerStep, "0.#####")</dd>
+
+            <dt>Current mechanical angle</dt>
+            <dd class="numeric">@Display.Number(State.MechanicalDegrees, "0.###", "degrees")</dd>
+
+            <dt>Working rate</dt>
+            <dd class="numeric">
+                @Display.Number(State.WorkingRateDegreesPerSecond, "0.###", "degrees/second")
+            </dd>
+
+            <dt>Moving</dt>
+            <dd>@Display.YesNo(State.IsMoving)</dd>
+
+            <dt>Derotating</dt>
+            <dd>@Display.YesNo(State.IsDerotating)</dd>
+        </dl>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Motion" Busy="Busy" Loaded="@Loaded" Description="@MotionDescription">
+    <Actions>
+        <button class="secondary small" @onclick="HaltAsync" disabled="@Busy">Halt</button>
+        <button class="small" @onclick="GoToHalfTravelAsync" disabled="@Busy">
+            Go to half travel
+        </button>
+        <button class="small" @onclick="GoToParallacticAsync" disabled="@Busy">
+            Go to parallactic angle
+        </button>
+    </Actions>
+    <ChildContent>
+        <Field Label="Set current position as half travel"
+               Hint="Only correct with the rotator physically at the midpoint of its travel.">
+            <ConfirmAction Label="Set as half travel" Word="HALF" Disabled="@Busy"
+                           Consequence="@SetHalfTravelConsequence" OnConfirmed="SetHalfTravelAsync" />
+        </Field>
+
+        <Field Label="Set current position as zero"
+               Hint="Only correct with the rotator physically at the position that should read zero.">
+            <ConfirmAction Label="Set as zero" Word="ZERO" Disabled="@Busy"
+                           Consequence="@SetZeroConsequence" OnConfirmed="SetZeroAsync" />
+        </Field>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Derotation" Busy="Busy" Loaded="@Loaded" Description="@DerotationDescription">
+    <Actions>
+        <button class="small" @onclick="ApplyDerotationAsync" disabled="@Busy">Apply</button>
+    </Actions>
+    <ChildContent>
+        <dl>
+            <dt>Derotating now</dt>
+            <dd>@Display.YesNo(State.IsDerotating)</dd>
+        </dl>
+
+        <Field Label="Field derotation"
+               Hint="What to send, not what the firmware is doing right now, that is the row above.">
+            <div class="check">
+                <input id="rderotate" type="checkbox" @bind="_derotationEnabled" />
+                <label for="rderotate">Follow the field rotation</label>
+            </div>
+        </Field>
+
+        <Field Label="Direction"
+               Hint="The firmware does not report the derotation direction back, so this is a toggle rather than a setting. Press it if derotation runs the wrong way.">
+            <button class="secondary small" @onclick="ToggleReverseAsync" disabled="@Busy">
+                Flip direction
+            </button>
+        </Field>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Backlash" Busy="Busy" Loaded="@Loaded"
+              Description="Slack taken up when the rotator reverses direction.">
+    <Actions>
+        <button class="small" @onclick="ApplyBacklashAsync" disabled="@Busy">Apply</button>
+    </Actions>
+    <ChildContent>
+        <Field Label="Backlash" For="rbacklash" Unit="steps">
+            <input id="rbacklash" type="number" step="1" min="0" max="32767"
+                   @bind="_backlashSteps" />
+        </Field>
+    </ChildContent>
+</FirmwareCard>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Driver settings</h2>
+            <p>
+                Applied when the driver connects, or by the client's own sync command. These
+                are driver settings, the controller neither stores nor needs them.
+            </p>
+        </div>
+    </div>
+
+    <Field Label="Reverse direction"
+           Hint="Flips the sense a client sees, without touching the mechanical angle the controller reports.">
+        <div class="check">
+            <input id="rreverse" type="checkbox" @bind="Working.Rotator.Reverse" />
+            <label for="rreverse">Reverse the direction seen by the client</label>
+        </div>
+    </Field>
+
+    <Field Label="Sync offset" For="rsyncoffset" Unit="degrees" Hint="@SyncOffsetHint">
+        <input id="rsyncoffset" type="number" step="any" @bind="Working.Rotator.SyncOffset" />
+    </Field>
+
+    <Field Label="Move to position on connect"
+           Hint="Off by default: a rotator that moves right after connecting surprises some clients and can interfere with conformance checks.">
+        <div class="check">
+            <input id="rmoveonconnect" type="checkbox"
+                   @bind="Working.Rotator.MoveToPositionOnConnect" />
+            <label for="rmoveonconnect">Move to a target angle on connect</label>
+        </div>
+    </Field>
+
+    <Field Label="Target angle" For="rposonconnect" Unit="degrees, mechanical">
+        <input id="rposonconnect" type="number" step="any"
+               @bind="Working.Rotator.PositionOnConnect" />
+    </Field>
+</section>
+
+<SaveBar IsDirty="IsDirty" Status="@SaveStatus" Failed="SaveFailed"
+         OnSave="Save" OnRevert="Revert" />
+
+@code {
+    private RotatorConfiguration? _config;
+
+    // Editable copies of the firmware values, refilled on every read.
+    private bool _derotationEnabled;
+    private long _backlashSteps;
+
+    private bool Loaded => _config is not null;
+
+    // An empty record means "not read yet", and every field inside it reports itself as
+    // unsupported, which is exactly what should be shown.
+    private RotatorConfiguration State => _config ?? new RotatorConfiguration();
+
+    private const string TravelDescription =
+        "The mechanical angle the controller counts from. The sky angle a client sees adds "
+        + "the sync offset set below.";
+
+    private const string MotionDescription =
+        "Ordinary moves are plain buttons. Replacing what the controller counts positions "
+        + "from needs confirmation, because it changes every angle already reported.";
+
+    private const string DerotationDescription =
+        "Keeps the field steady during a long exposure on an alt-az mount.";
+
+    private const string SetHalfTravelConsequence =
+        "Declares the current position to be half travel. Every angle the controller "
+        + "reports from here on is measured against this new reference.";
+
+    private const string SetZeroConsequence =
+        "Declares the current position to be mechanical zero. Every angle the controller "
+        + "reports from here on is measured against this new reference, and the sync offset "
+        + "below no longer lines up with the sky until it is corrected.";
+
+    // The mechanical angle is only mentioned once it has actually been read. Interpolating it
+    // unconditionally produced "currently not supported" on a page nobody had read yet, which
+    // reads as a fault rather than as "ask the controller first".
+    private string SyncOffsetHint =>
+        "Added to the controller's mechanical angle"
+        + (State.MechanicalDegrees.IsSupported
+            ? $", currently {Display.Number(State.MechanicalDegrees, "0.###", "degrees")},"
+            : ",")
+        + " to get the angle a client sees. Set by the client's own sync command, not something "
+        + "to type here by guesswork.";
+
+    private Task ReadAllAsync() =>
+        RunAsync(
+            async token =>
+            {
+                _config = await Session.Configuration.ReadRotatorAsync(token);
+                Adopt(_config);
+            },
+            "Read from the controller.");
+
+    /// <summary>
+    /// Copies what the controller reported into the editable fields, leaving anything it
+    /// does not support at whatever was there, so the form never shows a misleading zero.
+    /// </summary>
+    /// <remarks>
+    /// The derotation checkbox is deliberately not adopted here. The firmware only reports
+    /// whether it is actively derotating right now, from <c>:rT#</c>, not whether derotation
+    /// is switched on, and those are different things whenever the rotator is not tracking.
+    /// Re-adopting from that status would flip the checkbox back off right after the user
+    /// ticked it and applied. The current state is shown separately as read only.
+    /// </remarks>
+    private void Adopt(RotatorConfiguration config)
+    {
+        if (config.BacklashSteps.IsSupported) _backlashSteps = config.BacklashSteps.Value;
+    }
+
+    /// <summary>
+    /// Applies a section and then reads everything back, so the page shows what the
+    /// controller ended up with rather than what was typed.
+    /// </summary>
+    private Task ApplyAsync(Func<CancellationToken, Task> apply, string success) =>
+        RunAsync(
+            async token =>
+            {
+                await apply(token);
+
+                _config = await Session.Configuration.ReadRotatorAsync(token);
+                Adopt(_config);
+            },
+            success);
+
+    private Task HaltAsync() =>
+        ApplyAsync(token => Session.Configuration.RotatorHaltAsync(token), "Rotator halted.");
+
+    private Task GoToHalfTravelAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.RotatorGoToHalfTravelAsync(token),
+            "Moving to half travel.");
+
+    private Task GoToParallacticAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.RotatorGoToParallacticAsync(token),
+            "Moving to the parallactic angle.");
+
+    private Task SetHalfTravelAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.RotatorSetHalfTravelAsync(token),
+            "Current position set as half travel.");
+
+    private Task SetZeroAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.RotatorSetZeroAsync(token),
+            "Current position set as zero.");
+
+    private Task ApplyDerotationAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.WriteDerotationAsync(_derotationEnabled, token),
+            _derotationEnabled ? "Derotation enabled." : "Derotation disabled.");
+
+    private Task ToggleReverseAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.ToggleDerotationReverseAsync(token),
+            "Flipped the derotation direction.");
+
+    private Task ApplyBacklashAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.WriteRotatorBacklashAsync(_backlashSteps, token),
+            "Backlash written.");
+}

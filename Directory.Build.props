@@ -1,0 +1,33 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- Version compartida por todos los proyectos y por el instalador. -->
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <Authors>Juanjo Lopez</Authors>
+    <Product>OnStepX ASCOM</Product>
+    <Company>OnStepX ASCOM</Company>
+    <Copyright>Copyright (C) 2026 Juanjo Lopez</Copyright>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/juanjolopez/onstepx-ascom</RepositoryUrl>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <WarningsAsErrors>nullable</WarningsAsErrors>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!--
+    El shim COM es net48 y solo compila en Windows. En Linux se usa
+    OnStepX.CrossPlatform.slnf, que lo excluye. Esta propiedad permite
+    que los scripts sepan en que plataforma estan.
+  -->
+  <PropertyGroup Condition="'$(OS)' == 'Windows_NT'">
+    <OnStepXCanBuildComShim>true</OnStepXCanBuildComShim>
+  </PropertyGroup>
+
+</Project>

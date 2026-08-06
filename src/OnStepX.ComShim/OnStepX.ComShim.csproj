@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      net48 a proposito, siguiendo a OmniSimCOMProxy del repo oficial
+      ASCOM.Alpaca.Simulators. Verificado: ASCOM.Alpaca.Components 3.1.0
+      publica netstandard2.0, que net48 consume, asi que este shim puede
+      usar el cliente Alpaca oficial sin reimplementar nada.
+
+      Solo compila en Windows. En Linux usa OnStepX.CrossPlatform.slnf,
+      que excluye este proyecto.
+    -->
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <PlatformTarget>x86</PlatformTarget>
+    <RootNamespace>OnStepX.ComShim</RootNamespace>
+    <AssemblyName>OnStepX.ComShim</AssemblyName>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <ComVisible>false</ComVisible>
+    <Description>Local Server COM que expone los dispositivos OnStepX del servidor Alpaca a clientes solo COM. No habla con la montura: es cliente Alpaca de localhost.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ASCOM.Alpaca.Components" Version="3.1.0" />
+    <PackageReference Include="ASCOM.Com.Components" Version="3.1.0" />
+    <PackageReference Include="ASCOM.Common.Components" Version="3.1.0" />
+    <PackageReference Include="ASCOM.DeviceInterfaces" Version="7.1.2" />
+    <PackageReference Include="ASCOM.Exception.Library" Version="7.1.2" />
+    <PackageReference Include="ASCOM.Tools" Version="3.1.0" />
+  </ItemGroup>
+
+</Project>

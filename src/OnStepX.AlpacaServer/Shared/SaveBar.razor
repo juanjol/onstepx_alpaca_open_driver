@@ -1,0 +1,48 @@
+@*
+    Sticky bar for the driver settings of a page.
+
+    It says explicitly that saving writes the driver's own settings file and not the mount,
+    because the old setup dialogs mixed the two and there was no way to tell which one a
+    Save button had touched.
+*@
+
+<div class="save-bar">
+    @if (IsDirty)
+    {
+        <span class="dirty">unsaved changes</span>
+    }
+
+    <span class="muted">Writes the driver settings file, not the controller.</span>
+
+    <span class="spacer"></span>
+
+    @if (Status is not null)
+    {
+        <span class="@(Failed ? "error" : "ok")">@Status</span>
+    }
+
+    <button class="secondary" @onclick="OnRevert" disabled="@(!IsDirty)">Discard</button>
+    <button @onclick="OnSave" disabled="@(!IsDirty)">Save</button>
+</div>
+
+@code {
+    /// <summary>There are unsaved changes.</summary>
+    [Parameter]
+    public bool IsDirty { get; set; }
+
+    /// <summary>Message to show, if any.</summary>
+    [Parameter]
+    public string? Status { get; set; }
+
+    /// <summary>The message reports a failure.</summary>
+    [Parameter]
+    public bool Failed { get; set; }
+
+    /// <summary>Save.</summary>
+    [Parameter]
+    public EventCallback OnSave { get; set; }
+
+    /// <summary>Discard the changes.</summary>
+    [Parameter]
+    public EventCallback OnRevert { get; set; }
+}

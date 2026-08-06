@@ -1,0 +1,81 @@
+@*
+    A destructive action that cannot be triggered by one stray click.
+
+    Used for the commands that lose data or change how the firmware drives the axes:
+    clearing non volatile storage, restarting the controller, changing the mount type. The
+    user has to type the confirmation word, so the gesture is deliberate and the button
+    cannot be hit by keyboard navigation in the dark.
+*@
+
+@if (!_armed)
+{
+    <button class="danger" @onclick="Arm" disabled="@Disabled">@Label</button>
+}
+else
+{
+    <div class="notice notice-danger">
+        <p style="margin-top:0">@Consequence</p>
+        <div class="actions actions-inline">
+            <label for="@_inputId">Type <code>@Word</code> to confirm</label>
+            <input id="@_inputId" type="text" @bind="_typed" @bind:event="oninput"
+                   autocomplete="off" style="width:9rem" />
+            <button class="danger" @onclick="ConfirmAsync"
+                    disabled="@(Disabled || !Matches)">@Label</button>
+            <button class="secondary" @onclick="Cancel">Cancel</button>
+        </div>
+    </div>
+}
+
+@code {
+    private static int _sequence;
+    private readonly string _inputId = $"confirm{Interlocked.Increment(ref _sequence)}";
+
+    private bool _armed;
+    private string _typed = string.Empty;
+
+    /// <summary>Button text.</summary>
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>What will happen, in plain words.</summary>
+    [Parameter, EditorRequired]
+    public string Consequence { get; set; } = string.Empty;
+
+    /// <summary>Word the user has to type.</summary>
+    [Parameter]
+    public string Word { get; set; } = "CONFIRM";
+
+    /// <summary>The action is unavailable.</summary>
+    [Parameter]
+    public bool Disabled { get; set; }
+
+    /// <summary>Runs once confirmed.</summary>
+    [Parameter]
+    public EventCallback OnConfirmed { get; set; }
+
+    private bool Matches => string.Equals(_typed.Trim(), Word, StringComparison.Ordinal);
+
+    private void Arm()
+    {
+        _armed = true;
+        _typed = string.Empty;
+    }
+
+    private void Cancel()
+    {
+        _armed = false;
+        _typed = string.Empty;
+    }
+
+    private async Task ConfirmAsync()
+    {
+        if (!Matches)
+        {
+            return;
+        }
+
+        Cancel();
+
+        await OnConfirmed.InvokeAsync();
+    }
+}

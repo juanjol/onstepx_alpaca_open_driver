@@ -1,0 +1,189 @@
+@page "/settings"
+@using OnStepX.Core.Config
+@inherits SetupPageBase
+
+<h1>Settings file</h1>
+<p class="lead">
+    The server's own settings, and the whole configuration as a file you can carry to another
+    installation. Nothing here is stored in the controller.
+</p>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Alpaca server</h2>
+            <p>Changes to the port and to remote access need the server restarted.</p>
+        </div>
+    </div>
+
+    <Field Label="HTTP port" For="port"
+           Hint="11111 is the Alpaca convention, and it is what clients try first when they are not using discovery.">
+        <input id="port" type="number" min="1" max="65535" @bind="Working.Server.Port" />
+    </Field>
+
+    <Field Label="Site description" For="location"
+           Hint="Shown to clients that find this server through discovery, so make it say which rig it is.">
+        <input id="location" type="text" @bind="Working.Server.Location" />
+    </Field>
+
+    <Field Label="Remote access"
+           Hint="With this off the server listens on localhost only, which is right when the only clients run on this same machine.">
+        <div class="check">
+            <input id="remote" type="checkbox" @bind="Working.Server.AllowRemoteAccess" />
+            <label for="remote">Accept connections from other machines</label>
+        </div>
+    </Field>
+
+    <Field Label="Discovery"
+           Hint="Answers the Alpaca discovery broadcast on UDP port 32227. This is how NINA and the conformance tools find the server without anybody typing an address.">
+        <div class="check">
+            <input id="discovery" type="checkbox" @bind="Working.Server.AllowDiscovery" />
+            <label for="discovery">Answer discovery broadcasts</label>
+        </div>
+    </Field>
+
+    <Field Label="Swagger"
+           Hint="Publishes the REST surface as a browsable page. Useful when debugging against the real mount, and harmless to leave on.">
+        <div class="check">
+            <input id="swagger" type="checkbox" @bind="Working.Server.RunSwagger" />
+            <label for="swagger">Publish the API documentation</label>
+        </div>
+    </Field>
+
+    <Field Label="Strict Alpaca mode"
+           Hint="Rejects anything the specification does not allow, rather than being lenient. Worth turning on when chasing a client that is misbehaving.">
+        <div class="check">
+            <input id="strict" type="checkbox" @bind="Working.Server.StrictAlpacaMode" />
+            <label for="strict">Reject requests the specification does not allow</label>
+        </div>
+    </Field>
+
+    <Field Label="Authentication"
+           Hint="Only worth it when the server is reachable from outside this machine. Alpaca uses basic authentication, so on an untrusted network it needs to sit behind something that provides TLS.">
+        <div class="check">
+            <input id="auth" type="checkbox" @bind="Working.Server.UseAuthentication" />
+            <label for="auth">Require a user name and password</label>
+        </div>
+    </Field>
+
+    @if (Working.Server.UseAuthentication)
+    {
+        <Field Label="User name" For="user">
+            <input id="user" type="text" @bind="Working.Server.UserName" />
+        </Field>
+
+        <Field Label="Password" For="password"
+               Hint="Stored as plain text in the settings file, so it protects against a curious neighbour on the network and not against somebody with access to this machine.">
+            <input id="password" type="password" @bind="Working.Server.Password" />
+        </Field>
+    }
+</section>
+
+<SaveBar IsDirty="IsDirty" Status="@SaveStatus" Failed="SaveFailed"
+         OnSave="Save" OnRevert="Revert" />
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Export</h2>
+            <p>
+                The exported file is a valid settings file, so moving a configuration between
+                installations is a copy and not a conversion.
+            </p>
+        </div>
+        <div class="actions actions-inline">
+            <a href="settings/export" download="onstepx-settings.json">
+                <button class="secondary" type="button">Download</button>
+            </a>
+            <button class="secondary" @onclick="ShowExport">Show</button>
+        </div>
+    </div>
+
+    <p class="notice">
+        The authentication password is <strong>not</strong> included. An export is meant to be
+        copied around, attached to a message or committed somewhere, and a plaintext password
+        should not travel by accident. Type it again on the machine that imports this.
+    </p>
+
+    @if (_exported is not null)
+    {
+        <textarea readonly rows="16">@_exported</textarea>
+    }
+
+    <p class="card-note">
+        The live file is at <code>@ServerRuntime.Store.Path</code>. Settings that live in the
+        controller, such as the site, the limits and the park position, are not part of this
+        and stay with the mount.
+    </p>
+</section>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Import</h2>
+            <p>Paste an exported configuration. It is checked before anything is replaced.</p>
+        </div>
+        <div class="actions actions-inline">
+            <button @onclick="Import" disabled="@(string.IsNullOrWhiteSpace(_toImport))">
+                Import
+            </button>
+        </div>
+    </div>
+
+    @if (_importMessage is not null)
+    {
+        <p class="notice @(_importFailed ? "notice-error" : "notice-ok")">@_importMessage</p>
+    }
+
+    <textarea rows="14" placeholder="Paste the contents of an exported settings file here"
+              @bind="_toImport" @bind:event="oninput"></textarea>
+
+    <p class="card-note">
+        Importing replaces the whole configuration, including the connection settings, so the
+        driver may end up pointing at a port that does not exist on this machine. Check the
+        connection page afterwards. A device that is connected right now keeps working on the
+        settings it started with until it reconnects.
+    </p>
+</section>
+
+@code {
+    private string? _exported;
+    private string _toImport = string.Empty;
+    private string? _importMessage;
+    private bool _importFailed;
+
+    private void ShowExport() => _exported = SettingsStore.Export(ServerRuntime.Settings);
+
+    private void Import()
+    {
+        OnStepXSettings? imported = SettingsStore.TryImport(_toImport, out string? error);
+
+        if (imported is null)
+        {
+            _importFailed = true;
+            _importMessage = error ?? "The configuration could not be read.";
+            return;
+        }
+
+        // An import with no password carries the blank from the export, and silently wiping
+        // the password of a server that is using authentication would lock its clients out.
+        // Keeping the existing one is the only harmless choice.
+        if (imported.Server.Password.Length == 0)
+        {
+            imported.Server.Password = ServerRuntime.Settings.Server.Password;
+        }
+
+        ServerRuntime.UpdateSettings(imported);
+
+        // The form has to follow, or the save bar would offer to save the settings that were
+        // just replaced.
+        Revert();
+
+        _importFailed = false;
+        _importMessage =
+            "Configuration imported and saved. Check the connection page, since the port may "
+            + "not exist on this machine.";
+        _toImport = string.Empty;
+        _exported = null;
+    }
+}

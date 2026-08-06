@@ -1,0 +1,153 @@
+@page "/weather"
+@using OnStepX.Core.Configuration
+@inherits SetupPageBase
+
+<h1>Weather</h1>
+<p class="lead">
+    The controller's own environmental sensors, if any are fitted. A sensor that this
+    firmware build does not have shows <em>not supported</em> and never a zero, because a
+    zero dew point is believable and a client's safety logic would act on it, closing an
+    observatory roof for no reason. The driver's own settings are further down, and those
+    only take effect when saved.
+</p>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Controller values</h2>
+            <p>Nothing here is editable, it is read only telemetry from the controller.</p>
+        </div>
+        <div class="actions actions-inline">
+            <button @onclick="ReadAllAsync" disabled="@Busy">
+                @(Busy ? "Working..." : "Read from controller")
+            </button>
+        </div>
+    </div>
+
+    @if (Status is not null)
+    {
+        <p class="notice @(Failed ? "notice-error" : "notice-ok")">@Status</p>
+    }
+
+    @if (_config is null && !Busy)
+    {
+        <p class="muted">Nothing read yet.</p>
+    }
+</section>
+
+<FirmwareCard Title="Sensors" Busy="Busy" Loaded="@Loaded" Description="@SensorsDescription">
+    <ChildContent>
+        <dl>
+            <dt>Temperature</dt>
+            <dd class="numeric">@Display.Number(State.Temperature, "0.#", "degrees")</dd>
+
+            <dt>Pressure</dt>
+            <dd class="numeric">@Display.Number(State.Pressure, "0.#", "mbar")</dd>
+
+            <dt>Humidity</dt>
+            <dd class="numeric">@Display.Number(State.Humidity, "0.#", "percent")</dd>
+
+            <dt>Dew point</dt>
+            <dd class="numeric">@Display.Number(State.DewPoint, "0.#", "degrees")</dd>
+
+            <dt>Controller temperature</dt>
+            <dd class="numeric">@Display.Number(State.McuTemperature, "0.#", "degrees")</dd>
+        </dl>
+    </ChildContent>
+</FirmwareCard>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Driver settings</h2>
+            <p>
+                These are driver settings, the controller neither stores nor needs them.
+            </p>
+        </div>
+    </div>
+
+    <Field Label="Averaging period" For="waverage" Unit="hours"
+           Hint="Reported to clients as the observing conditions averaging period. It does not change how the controller itself samples.">
+        <input id="waverage" type="number" step="any" min="0"
+               @bind="Working.ObservingConditions.AveragePeriod" />
+    </Field>
+
+    <Field Label="Push external weather to the controller"
+           Hint="For a site with no sensors fitted, so the controller's own refraction compensation still has something to work from.">
+        <div class="check">
+            <input id="wpush" type="checkbox"
+                   @bind="Working.ObservingConditions.PushWeatherToController" />
+            <label for="wpush">Push readings from an external source</label>
+        </div>
+    </Field>
+</section>
+
+<SaveBar IsDirty="IsDirty" Status="@SaveStatus" Failed="SaveFailed"
+         OnSave="Save" OnRevert="Revert" />
+
+@if (Working.ObservingConditions.PushWeatherToController)
+{
+    <section class="card">
+        <div class="card-head">
+            <div>
+                <h2>Push weather now</h2>
+                <p>
+                    Sends a one off reading to the controller. Leave a field blank to leave
+                    that value untouched.
+                </p>
+            </div>
+        </div>
+
+        <Field Label="Temperature" For="wpushtemp" Unit="degrees">
+            <input id="wpushtemp" type="number" step="any" @bind="_pushTemperature" />
+        </Field>
+
+        <Field Label="Pressure" For="wpushpressure" Unit="mbar">
+            <input id="wpushpressure" type="number" step="any" min="0" @bind="_pushPressure" />
+        </Field>
+
+        <Field Label="Humidity" For="wpushhumidity" Unit="percent">
+            <input id="wpushhumidity" type="number" step="any" min="0" max="100"
+                   @bind="_pushHumidity" />
+        </Field>
+
+        <div class="actions actions-inline">
+            <button @onclick="PushWeatherNowAsync" disabled="@Busy">Push</button>
+        </div>
+    </section>
+}
+
+@code {
+    private WeatherConfiguration? _config;
+
+    // Left blank by default, so pushing does not overwrite a value the user did not type.
+    private double? _pushTemperature;
+    private double? _pushPressure;
+    private double? _pushHumidity;
+
+    private bool Loaded => _config is not null;
+
+    // An empty record means "not read yet", and every field inside it reports itself as
+    // unsupported, which is exactly what should be shown.
+    private WeatherConfiguration State => _config ?? new WeatherConfiguration();
+
+    private const string SensorsDescription =
+        "Reported separately per sensor, so a sensor missing from this firmware build shows "
+        + "not supported rather than a value nobody measured.";
+
+    private Task ReadAllAsync() =>
+        RunAsync(
+            async token => _config = await Session.Configuration.ReadWeatherAsync(token),
+            "Read from the controller.");
+
+    private Task PushWeatherNowAsync() =>
+        RunAsync(
+            async token =>
+            {
+                await Session.Configuration.PushWeatherAsync(
+                    _pushTemperature, _pushPressure, _pushHumidity, token);
+
+                _config = await Session.Configuration.ReadWeatherAsync(token);
+            },
+            "Weather pushed to the controller.");
+}

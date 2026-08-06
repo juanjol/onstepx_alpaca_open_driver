@@ -1,0 +1,907 @@
+@page "/mount"
+@using OnStepX.Core.Configuration
+@using OnStepX.Core.Protocol
+@inherits SetupPageBase
+
+<h1>Mount</h1>
+<p class="lead">
+    Site, clock, limits and motion settings. Everything in the sections below lives in the
+    controller's own memory: it applies immediately, it survives reinstalling the driver, and
+    it needs the controller reachable. The driver's own settings are further down, and those
+    only take effect when saved.
+</p>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Controller values</h2>
+            <p>
+                Read once and then edited section by section, so a slow serial link is paid
+                for once rather than on every keystroke. The driver connects, reads and
+                releases the port again, so this never takes the mount away from a client.
+            </p>
+        </div>
+        <div class="actions actions-inline">
+            <button @onclick="ReadAllAsync" disabled="@Busy">
+                @(Busy ? "Working..." : "Read from controller")
+            </button>
+        </div>
+    </div>
+
+    @if (Status is not null)
+    {
+        <p class="notice @(Failed ? "notice-error" : "notice-ok")">@Status</p>
+    }
+
+    @if (_config is null && !Busy)
+    {
+        <p class="muted">Nothing read yet.</p>
+    }
+</section>
+
+<FirmwareCard Title="Site" Busy="Busy" Loaded="@Loaded" Description="@SiteDescription">
+    <Actions>
+        <button class="small" @onclick="ApplySiteAsync" disabled="@Busy">Apply site</button>
+    </Actions>
+    <ChildContent>
+        <Field Label="Latitude" For="lat" Unit="degrees, positive north" Hint="@LatitudeHint">
+            <input id="lat" type="number" step="any" min="-90" max="90" @bind="_latitude" />
+        </Field>
+
+        <Field Label="Longitude" For="lon" Unit="degrees, positive east" Hint="@LongitudeHint">
+            <input id="lon" type="number" step="any" min="-180" max="180" @bind="_longitude" />
+        </Field>
+
+        <Field Label="Elevation" For="elev" Unit="metres"
+               Hint="Used by the firmware's own refraction model.">
+            <input id="elev" type="number" step="1" min="-300" max="10000" @bind="_elevation" />
+        </Field>
+
+        <Field Label="Active site slot" Unit="0 to 3"
+               Hint="OnStep keeps four sites. The active one is what every other command uses.">
+            <span>@Display.Integer(Site.ActiveSiteSlot)</span>
+        </Field>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Date and time" Busy="Busy" Loaded="@Loaded" Description="@ClockDescription">
+    <Actions>
+        <button class="small" @onclick="ApplyClockFromComputerAsync" disabled="@Busy">
+            Set from this computer
+        </button>
+    </Actions>
+    <ChildContent>
+        <p class="notice notice-warn">
+            OnStep never applies daylight saving. Its clock is always
+            <strong>standard</strong> time, and the offset it stores is the value to
+            <strong>add</strong> to local time to reach UT1, which is the negative of the
+            offset people normally write down. Setting the clock from this computer handles
+            both, and in summer it is the only safe way to do it.
+        </p>
+
+        <dl>
+            <dt>Local standard time</dt>
+            <dd class="numeric">@Display.Moment(Site.LocalStandardTime)</dd>
+
+            <dt>Universal time, UT1</dt>
+            <dd class="numeric">@Display.Moment(Site.UniversalTime)</dd>
+
+            <dt>Local sidereal time</dt>
+            <dd class="numeric">@Display.Hours(Site.SiderealTime)</dd>
+
+            <dt>Offset stored</dt>
+            <dd class="numeric">@Display.Number(Site.UtcOffsetHours, "+0.##;-0.##", "hours")</dd>
+
+            <dt>Clock usable</dt>
+            <dd>@Display.YesNo(Site.ClockReady)</dd>
+        </dl>
+
+        <p class="card-note">@ComputerClockNote</p>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Limits" Busy="Busy" Loaded="@Loaded" Description="@LimitsDescription">
+    <Actions>
+        <button class="small" @onclick="ApplyLimitsAsync" disabled="@Busy">Apply limits</button>
+    </Actions>
+    <ChildContent>
+        <Field Label="Horizon limit" For="horizon" Unit="degrees of altitude"
+               Hint="Lowest altitude the mount will go to. Negative values are allowed for a site with a view below the mathematical horizon.">
+            <input id="horizon" type="number" step="1" min="-30" max="30" @bind="_horizonLimit" />
+        </Field>
+
+        <Field Label="Overhead limit" For="overhead" Unit="degrees of altitude"
+               Hint="Highest altitude. Keeping it below ninety degrees stops a German mount reaching the region near the zenith where the tube can meet the mount.">
+            <input id="overhead" type="number" step="1" min="60" max="90" @bind="_overheadLimit" />
+        </Field>
+
+        <Field Label="East meridian limit" For="mere" Unit="minutes past the meridian"
+               Hint="How far past the meridian the mount keeps tracking while on the east side of the pier. This is what triggers a meridian flip.">
+            <input id="mere" type="number" step="1" min="-270" max="270" @bind="_meridianEast" />
+        </Field>
+
+        <Field Label="West meridian limit" For="merw" Unit="minutes past the meridian">
+            <input id="merw" type="number" step="1" min="-270" max="270" @bind="_meridianWest" />
+        </Field>
+
+        <h3>Axis travel, as the firmware reports it</h3>
+        <dl>
+            <dt>Axis 1</dt>
+            <dd class="numeric">@Axis1Travel</dd>
+
+            <dt>Axis 1, in hours</dt>
+            <dd class="numeric">@Display.Number(Limits.Axis1MaximumHours, "0.##", "hours")</dd>
+
+            <dt>Axis 2</dt>
+            <dd class="numeric">@Axis2Travel</dd>
+        </dl>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Meridian flip" Busy="Busy" Loaded="@Loaded"
+              Description="What a German equatorial does when a target crosses the meridian.">
+    <Actions>
+        <button class="small" @onclick="ApplyMeridianAsync" disabled="@Busy">Apply</button>
+        @if (Meridian.WaitingAtHome)
+        {
+            <button class="small" @onclick="ContinueFlipAsync" disabled="@Busy">
+                Continue the flip
+            </button>
+        }
+    </Actions>
+    <ChildContent>
+        @if (Meridian.WaitingAtHome)
+        {
+            <p class="notice notice-warn">
+                The mount is paused at home waiting for permission to finish the flip.
+                Nothing will move until it is told to continue.
+            </p>
+        }
+
+        <Field Label="Automatic flip"
+               Hint="With this off the mount stops tracking at the meridian limit instead of flipping, and noticing that is the client's problem.">
+            <div class="check">
+                <input id="autoflip" type="checkbox" @bind="_autoFlip" />
+                <label for="autoflip">Flip automatically at the limit</label>
+            </div>
+        </Field>
+
+        <Field Label="How to get there" For="flipmode"
+               Hint="Pausing at home is the cautious choice on a rig where a cable can snag: the mount stops at a known position and waits to be told to carry on.">
+            <select id="flipmode" @bind="_flipMode">
+                <option value="@MeridianFlipHomeMode.DirectSlew">Slew directly</option>
+                <option value="@MeridianFlipHomeMode.VisitHome">Go through home</option>
+                <option value="@MeridianFlipHomeMode.PauseAtHome">Pause at home</option>
+            </select>
+        </Field>
+
+        <Field Label="Preferred pier side" For="pierside"
+               Hint="Which side to use when a target can be reached from both. Best gives the longest run before the next flip.">
+            <select id="pierside" @bind="_preferredSide">
+                <option value="@PreferredPierSide.Best">Best</option>
+                <option value="@PreferredPierSide.East">East</option>
+                <option value="@PreferredPierSide.West">West</option>
+                <option value="@PreferredPierSide.Automatic">Automatic</option>
+            </select>
+        </Field>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Tracking" Busy="Busy" Loaded="@Loaded"
+              Description="Compensation model and the fine rate offsets.">
+    <Actions>
+        <button class="small" @onclick="ApplyTrackingAsync" disabled="@Busy">Apply</button>
+    </Actions>
+    <ChildContent>
+        <dl>
+            <dt>Tracking</dt>
+            <dd>@Display.YesNo(Tracking.IsTracking)</dd>
+
+            <dt>Drive rate</dt>
+            <dd>@Display.Words(Tracking.Rate.ToString())</dd>
+        </dl>
+
+        <Field Label="Compensation" For="comp" Hint="@CompensationHint">
+            <select id="comp" @bind="_compensation">
+                <option value="@TrackingCompensation.None">Off</option>
+                <option value="@TrackingCompensation.RefractionSingleAxis">Refraction, single axis</option>
+                <option value="@TrackingCompensation.RefractionDualAxis">Refraction, dual axis</option>
+                <option value="@TrackingCompensation.ModelSingleAxis">Full model, single axis</option>
+                <option value="@TrackingCompensation.ModelDualAxis">Full model, dual axis</option>
+            </select>
+        </Field>
+
+        <Field Label="Right ascension offset" For="raoff" Unit="arcseconds per sidereal second"
+               Hint="The firmware's own unit. The ASCOM property of the same name is in seconds of right ascension, fifteen times larger, and the driver converts between them. Writable only while the drive rate is sidereal.">
+            <input id="raoff" type="number" step="any" @bind="_rightAscensionOffset" />
+        </Field>
+
+        <Field Label="Declination offset" For="decoff" Unit="arcseconds per sidereal second">
+            <input id="decoff" type="number" step="any" @bind="_declinationOffset" />
+        </Field>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Backlash" Busy="Busy" Loaded="@Loaded"
+              Description="Slack in each axis, taken up when the direction reverses. Measured at the sky, not at the motor.">
+    <Actions>
+        <button class="small" @onclick="ApplyBacklashAsync" disabled="@Busy">Apply</button>
+    </Actions>
+    <ChildContent>
+        <Field Label="Right ascension or azimuth" For="blra" Unit="arcseconds">
+            <input id="blra" type="number" step="1" min="0" max="3600" @bind="_backlashRa" />
+        </Field>
+
+        <Field Label="Declination or altitude" For="bldec" Unit="arcseconds">
+            <input id="bldec" type="number" step="1" min="0" max="3600" @bind="_backlashDec" />
+        </Field>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Goto speed" Busy="Busy" Loaded="@Loaded" Description="@SlewDescription">
+    <Actions>
+        <button class="small" @onclick="ApplySlewRateAsync" disabled="@Busy">Apply period</button>
+    </Actions>
+    <ChildContent>
+        <Field Label="Step period" For="period" Unit="microseconds per step" Hint="@SlewHint">
+            <input id="period" type="number" step="any" min="1" max="1000" @bind="_slewPeriod" />
+            <span class="muted">@CurrentSpeed</span>
+        </Field>
+
+        <Field Label="Presets"
+               Hint="Relative to the mount's default speed. The numbering runs the other way from the speed because the parameter scales the step period.">
+            <button class="secondary small" @onclick="() => ApplyPresetAsync(1)" disabled="@Busy">200%</button>
+            <button class="secondary small" @onclick="() => ApplyPresetAsync(2)" disabled="@Busy">150%</button>
+            <button class="secondary small" @onclick="() => ApplyPresetAsync(3)" disabled="@Busy">100%</button>
+            <button class="secondary small" @onclick="() => ApplyPresetAsync(4)" disabled="@Busy">67%</button>
+            <button class="secondary small" @onclick="() => ApplyPresetAsync(5)" disabled="@Busy">50%</button>
+        </Field>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Home" Busy="Busy" Loaded="@Loaded"
+              Description="The reference position the firmware counts everything from.">
+    <Actions>
+        <button class="small" @onclick="ApplyHomeAsync" disabled="@Busy">Apply offsets</button>
+        <button class="secondary small" @onclick="FindHomeAsync" disabled="@Busy">Find home</button>
+    </Actions>
+    <ChildContent>
+        <dl>
+            <dt>Home sensors fitted</dt>
+            <dd>@Display.YesNo(Home.HasSensors)</dd>
+
+            <dt>At home now</dt>
+            <dd>@Display.YesNo(Home.IsAtHome)</dd>
+
+            <dt>Homing</dt>
+            <dd>@Display.YesNo(Home.IsHoming)</dd>
+        </dl>
+
+        <Field Label="Home on power up"
+               Hint="Only useful with home sensors fitted. Without them the mount has nothing to search for.">
+            <div class="check">
+                <input id="autohome" type="checkbox" @bind="_autoHomeAtBoot" />
+                <label for="autohome">Find home automatically at boot</label>
+            </div>
+        </Field>
+
+        <Field Label="Axis 1 offset" For="ho1" Unit="arcseconds"
+               Hint="Corrects for a home switch that does not sit exactly at the mechanical reference.">
+            <input id="ho1" type="number" step="1" @bind="_homeOffset1" />
+        </Field>
+
+        <Field Label="Axis 2 offset" For="ho2" Unit="arcseconds">
+            <input id="ho2" type="number" step="1" @bind="_homeOffset2" />
+        </Field>
+
+        <Field Label="Sensor sense"
+               Hint="These are toggles rather than values, because the firmware flips the sense and does not report it. Use them if homing runs away from the switch instead of towards it.">
+            <button class="secondary small" @onclick="() => ToggleSenseAsync(1)" disabled="@Busy">
+                Flip axis 1
+            </button>
+            <button class="secondary small" @onclick="() => ToggleSenseAsync(2)" disabled="@Busy">
+                Flip axis 2
+            </button>
+        </Field>
+
+        <Field Label="Declare this position home"
+               Hint="Only correct with the mount physically at its home position.">
+            <ConfirmAction Label="Reset at home" Word="HOME" Disabled="@Busy"
+                           Consequence="The controller will take the current position to be home, as a cold start would. If the mount is not physically at home, its pointing is wrong by the difference until the next real homing."
+                           OnConfirmed="ResetAtHomeAsync" />
+        </Field>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Park" Busy="Busy" Loaded="@Loaded" Description="@ParkDescription">
+    <Actions>
+        <button class="secondary small" @onclick="ParkAsync" disabled="@Busy">Park</button>
+        <button class="secondary small" @onclick="UnparkAsync" disabled="@Busy">Unpark</button>
+    </Actions>
+    <ChildContent>
+        <dl>
+            <dt>Park state</dt>
+            <dd>@Display.Words(ParkState.ToString())</dd>
+        </dl>
+
+        <Field Label="Set the park position"
+               Hint="Point the mount where you want it to end up, then record it.">
+            <ConfirmAction Label="Park here from now on" Word="PARK" Disabled="@Busy"
+                           Consequence="Replaces the stored park position with the mount's current position. Every future park, from any client, comes here."
+                           OnConfirmed="SetParkPositionAsync" />
+        </Field>
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Periodic error correction" Busy="Busy" Loaded="@Loaded"
+              Description="Records one worm rotation of tracking error and plays it back.">
+    <ChildContent>
+        @if (!Pec.IsSupported)
+        {
+            <p class="muted">
+                This firmware build reports no PEC at all, so there is nothing to configure
+                here. That is not the same as PEC being idle, and the controller says which
+                of the two it is.
+            </p>
+        }
+        else
+        {
+            <dl>
+                <dt>State</dt>
+                <dd>@Display.Words(Pec.State.ToString())</dd>
+
+                <dt>Data recorded</dt>
+                <dd>@Display.YesNo(Pec.HasRecordedData)</dd>
+
+                <dt>Worm rotation</dt>
+                <dd class="numeric">@Display.Integer(Pec.WormSteps, "steps")</dd>
+
+                <dt>Buffer</dt>
+                <dd class="numeric">@Display.Integer(Pec.BufferSeconds, "sidereal seconds")</dd>
+
+                <dt>Steps per sidereal second</dt>
+                <dd class="numeric">@Display.Number(Pec.StepsPerSiderealSecond, "0.000")</dd>
+
+                <dt>Index sense position</dt>
+                <dd class="numeric">@Display.Integer(Pec.IndexSensePosition, "sidereal seconds")</dd>
+            </dl>
+
+            <Field Label="Playback"
+                   Hint="Playback needs a recording. With an empty buffer the firmware stays idle rather than pretending to correct anything.">
+                <button class="secondary small" @onclick="StartPecAsync" disabled="@Busy">Play</button>
+                <button class="secondary small" @onclick="StopPecAsync" disabled="@Busy">Stop</button>
+            </Field>
+
+            <Field Label="Recording"
+                   Hint="Recording is armed here and begins at the next index pulse, so it needs the mount tracking a star with a guider running.">
+                <button class="secondary small" @onclick="ArmPecAsync" disabled="@Busy">
+                    Arm recording
+                </button>
+                <button class="secondary small" @onclick="SavePecAsync" disabled="@Busy">
+                    Save to controller memory
+                </button>
+            </Field>
+
+            <Field Label="Worm rotation" For="worm" Unit="steps"
+                   Hint="How many steps one full rotation of the worm takes. Wrong here and the correction drifts out of phase with the error it is meant to cancel.">
+                <input id="worm" type="number" step="1" min="1" @bind="_wormSteps" />
+                <button class="secondary small" @onclick="ApplyWormStepsAsync" disabled="@Busy">
+                    Apply
+                </button>
+            </Field>
+
+            <Field Label="Discard the recording">
+                <ConfirmAction Label="Clear the buffer" Word="CLEAR" Disabled="@Busy"
+                               Consequence="Throws away the recorded correction curve. Recording it again takes one full worm rotation with a guider running."
+                               OnConfirmed="ClearPecAsync" />
+            </Field>
+        }
+    </ChildContent>
+</FirmwareCard>
+
+<FirmwareCard Title="Buzzer" Busy="Busy" Loaded="@Loaded"
+              Description="The controller's own beeper, if one is fitted.">
+    <ChildContent>
+        <dl>
+            <dt>Enabled</dt>
+            <dd>@Display.YesNo(BuzzerEnabled)</dd>
+        </dl>
+
+        <Field Label="Sound"
+               Hint="No command reads the buzzer setting back on its own, so the state above comes from the mount status string.">
+            <button class="secondary small" @onclick="() => SetBuzzerAsync(true)" disabled="@Busy">
+                Enable
+            </button>
+            <button class="secondary small" @onclick="() => SetBuzzerAsync(false)" disabled="@Busy">
+                Disable
+            </button>
+            <button class="secondary small" @onclick="TestBuzzerAsync" disabled="@Busy">
+                Test beep
+            </button>
+        </Field>
+    </ChildContent>
+</FirmwareCard>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Optics</h2>
+            <p>
+                Reported to clients so they can work out a field of view and an image scale.
+                These are driver settings; the controller neither stores nor needs them.
+            </p>
+        </div>
+    </div>
+
+    <Field Label="Aperture diameter" For="aperture" Unit="metres">
+        <input id="aperture" type="number" step="any" min="0"
+               @bind="Working.Telescope.ApertureDiameter" />
+    </Field>
+
+    <Field Label="Aperture area" For="area" Unit="square metres"
+           Hint="Set this when a central obstruction makes the clear area smaller than the full circle. Left at zero, clients fall back to the diameter.">
+        <input id="area" type="number" step="any" min="0" @bind="Working.Telescope.ApertureArea" />
+    </Field>
+
+    <Field Label="Focal length" For="focal" Unit="metres">
+        <input id="focal" type="number" step="any" min="0" @bind="Working.Telescope.FocalLength" />
+    </Field>
+
+    <Field Label="On connect"
+           Hint="Sends this computer's clock to the controller when the mount device connects, as standard time with the matching offset. Worth having on a controller with no real time clock battery.">
+        <div class="check">
+            <input id="setclock" type="checkbox" @bind="Working.Telescope.SetDateTimeOnConnect" />
+            <label for="setclock">Set the controller clock on connect</label>
+        </div>
+    </Field>
+</section>
+
+<SaveBar IsDirty="IsDirty" Status="@SaveStatus" Failed="SaveFailed"
+         OnSave="Save" OnRevert="Revert" />
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>Advanced</h2>
+            <p>
+                These change how the firmware drives the mount, or discard what it has
+                stored. Each one asks for confirmation, because none of them can be undone
+                from here.
+            </p>
+        </div>
+    </div>
+
+    <Field Label="Mount type" For="mounttype" Hint="@MountTypeHint">
+        <select id="mounttype" @bind="_mountType">
+            @foreach (OnStepMountType type in MountTypes)
+            {
+                <option value="@type">@Display.Words(type.ToString())</option>
+            }
+        </select>
+        <ConfirmAction Label="Set mount type" Word="MOUNT" Disabled="@Busy"
+                       Consequence="The mount type decides how the firmware interprets both axes. A wrong value can drive the mount into its own mechanics on the first goto after the restart. Change it only if you know the mount is built that way."
+                       OnConfirmed="ApplyMountTypeAsync" />
+    </Field>
+
+    <Field Label="Restart the controller"
+           Hint="Every connected client loses its device and has to reconnect.">
+        <ConfirmAction Label="Restart" Word="RESTART" Disabled="@Busy"
+                       Consequence="The controller reboots immediately. The connection drops, any goto in progress is abandoned, and the mount stops tracking until it is set up again."
+                       OnConfirmed="RestartControllerAsync" />
+    </Field>
+
+    <Field Label="Clear the controller's memory"
+           Hint="The driver's own settings file is untouched. This is about what the mount stores.">
+        <ConfirmAction Label="Clear stored settings" Word="ERASE" Disabled="@Busy"
+                       Consequence="Marks the controller's non volatile storage to be wiped on the next boot. The site, the park position, the alignment model, the PEC recording and every axis setting are lost, and the mount has to be commissioned from scratch."
+                       OnConfirmed="ClearStorageAsync" />
+    </Field>
+</section>
+
+@code {
+    private static readonly OnStepMountType[] MountTypes =
+    [
+        OnStepMountType.Gem,
+        OnStepMountType.Fork,
+        OnStepMountType.AltAzm,
+        OnStepMountType.AltAlt,
+        OnStepMountType.GemTangentArm,
+        OnStepMountType.GemTangentArmCross,
+        OnStepMountType.ForkTangentArm,
+        OnStepMountType.ForkTangentArmCross,
+        OnStepMountType.AltAzmUnlimited,
+    ];
+
+    private MountConfiguration? _config;
+
+    // Editable copies of the firmware values, refilled on every read.
+    private double _latitude;
+    private double _longitude;
+    private double _elevation;
+    private int _horizonLimit;
+    private int _overheadLimit = 90;
+    private int _meridianEast;
+    private int _meridianWest;
+    private bool _autoFlip;
+    private MeridianFlipHomeMode _flipMode = MeridianFlipHomeMode.DirectSlew;
+    private PreferredPierSide _preferredSide = PreferredPierSide.Best;
+    private TrackingCompensation _compensation = TrackingCompensation.None;
+    private double _rightAscensionOffset;
+    private double _declinationOffset;
+    private int _backlashRa;
+    private int _backlashDec;
+    private double _slewPeriod = 107;
+    private bool _autoHomeAtBoot;
+    private int _homeOffset1;
+    private int _homeOffset2;
+    // Starts at zero rather than at a plausible number, so a page where the PEC read failed
+    // cannot quietly offer to write a worm rotation of one step. The input's own minimum then
+    // marks it as needing a value.
+    private long _wormSteps;
+    private OnStepMountType _mountType = OnStepMountType.Gem;
+
+    private bool Loaded => _config is not null;
+
+    // Shorthands so the markup can read a section without repeating the null check. An empty
+    // record means "not read yet", and every field inside it reports itself as unsupported,
+    // which is exactly what should be shown.
+    private SiteConfiguration Site => _config?.Site ?? new SiteConfiguration();
+    private MeridianConfiguration Meridian => _config?.Meridian ?? new MeridianConfiguration();
+    private LimitConfiguration Limits => _config?.Limits ?? new LimitConfiguration();
+    private TrackingConfiguration Tracking => _config?.Tracking ?? new TrackingConfiguration();
+    private SlewRateConfiguration SlewRate => _config?.SlewRate ?? new SlewRateConfiguration();
+    private HomeConfiguration Home => _config?.Home ?? new HomeConfiguration();
+    private PecConfiguration Pec => _config?.Pec ?? new PecConfiguration();
+    private FirmwareValue<OnStepMountType> MountType => _config?.MountType ?? default;
+    private bool BuzzerEnabled => _config?.BuzzerEnabled ?? false;
+    private ParkState ParkState => _config?.ParkState ?? ParkState.Unknown;
+
+    private const string SiteDescription =
+        "Where the mount thinks it is. A wrong site puts every goto in the wrong place. It is "
+        + "stored in the controller and not in the driver, because the mount needs it whether "
+        + "or not a driver is attached.";
+
+    private const string ClockDescription =
+        "The controller clock drives sidereal time, so being a minute out is a quarter of a "
+        + "degree of pointing error.";
+
+    private const string LimitsDescription =
+        "The firmware refuses a goto outside these and stops tracking at them. They are the "
+        + "last line of defence against the telescope meeting the pier, which is why they "
+        + "belong in the controller rather than in a client.";
+
+    private const string ParkDescription =
+        "The park position lives in the controller, so it is remembered across power cycles "
+        + "and is the same for every client.";
+
+    private const string SlewDescription =
+        "Expressed as the step period, so a smaller number is a faster slew. The firmware "
+        + "refuses anything below its own floor.";
+
+    private const string CompensationHint =
+        "Refraction bends the apparent position near the horizon, and the full model also "
+        + "corrects for the mount's own imperfections. Dual axis moves declination as well, "
+        + "which only helps on a well aligned mount. Note that while compensation is on the "
+        + "firmware stops reporting which drive rate is selected.";
+
+    private string LatitudeHint => $"Controller reports {Display.Angle(Site.Latitude)}.";
+
+    private string LongitudeHint =>
+        $"Controller reports {Display.Angle(Site.Longitude)}. OnStep itself stores longitude "
+        + "positive west, and the driver converts, so what you type here is the ordinary map "
+        + "convention.";
+
+    private string SlewHint =>
+        $"Fastest this controller accepts: {Display.Number(SlewRate.FastestPeriodMicroseconds, "0.###")}. "
+        + $"Its default: {Display.Number(SlewRate.BasePeriodMicroseconds, "0.###")}.";
+
+    private string CurrentSpeed => $"currently {Display.Number(SlewRate.DegreesPerSecond, "0.0", "deg/s")}";
+
+    private string MountTypeHint =>
+        $"In force now: {Display.Text(MountType)}. A change takes effect at the next restart.";
+
+    private string Axis1Travel =>
+        $"{Display.Number(Limits.Axis1MinimumDegrees, "0.#")} to "
+        + $"{Display.Number(Limits.Axis1MaximumDegrees, "0.#", "degrees")}";
+
+    private string Axis2Travel =>
+        $"{Display.Number(Limits.Axis2MinimumDegrees, "0.#")} to "
+        + $"{Display.Number(Limits.Axis2MaximumDegrees, "0.#", "degrees")}";
+
+    private string ComputerClockNote =>
+        $"This computer's standard time is {ComputerStandardTime:yyyy-MM-dd HH:mm:ss}, and the "
+        + $"offset to store for it is {OffsetToStore:+0.##;-0.##} hours.";
+
+    /// <summary>
+    /// This computer's time with daylight saving removed, which is the only form OnStep
+    /// understands.
+    /// </summary>
+    private static DateTime ComputerStandardTime =>
+        DateTime.UtcNow + TimeZoneInfo.Local.BaseUtcOffset;
+
+    /// <summary>
+    /// The offset OnStep wants stored, which is the negative of the usual timezone offset
+    /// because it is added to local time to reach UT1.
+    /// </summary>
+    private static double OffsetToStore => -TimeZoneInfo.Local.BaseUtcOffset.TotalHours;
+
+    private Task ReadAllAsync() =>
+        RunAsync(
+            async token =>
+            {
+                _config = await Session.Configuration.ReadMountAsync(token);
+                Adopt(_config);
+            },
+            "Read from the controller.");
+
+    /// <summary>
+    /// Copies what the controller reported into the editable fields, leaving anything it does
+    /// not support at whatever was there, so the form never shows a misleading zero.
+    /// </summary>
+    private void Adopt(MountConfiguration config)
+    {
+        if (config.Site.Latitude.IsSupported) _latitude = config.Site.Latitude.Value;
+        if (config.Site.Longitude.IsSupported) _longitude = config.Site.Longitude.Value;
+        if (config.Site.Elevation.IsSupported) _elevation = config.Site.Elevation.Value;
+
+        if (config.Limits.HorizonDegrees.IsSupported)
+        {
+            _horizonLimit = (int)Math.Round(config.Limits.HorizonDegrees.Value);
+        }
+
+        if (config.Limits.OverheadDegrees.IsSupported)
+        {
+            _overheadLimit = (int)Math.Round(config.Limits.OverheadDegrees.Value);
+        }
+
+        if (config.Limits.MeridianEastMinutes.IsSupported)
+        {
+            _meridianEast = config.Limits.MeridianEastMinutes.Value;
+        }
+
+        if (config.Limits.MeridianWestMinutes.IsSupported)
+        {
+            _meridianWest = config.Limits.MeridianWestMinutes.Value;
+        }
+
+        _autoFlip = config.Meridian.AutoFlip;
+        _flipMode = config.Meridian.HomeMode;
+
+        if (config.Meridian.PreferredSide.IsSupported
+            && config.Meridian.PreferredSide.Value != PreferredPierSide.Unknown)
+        {
+            _preferredSide = config.Meridian.PreferredSide.Value;
+        }
+
+        _compensation = config.Tracking.Compensation;
+
+        if (config.Tracking.RightAscensionOffset.IsSupported)
+        {
+            _rightAscensionOffset = config.Tracking.RightAscensionOffset.Value;
+        }
+
+        if (config.Tracking.DeclinationOffset.IsSupported)
+        {
+            _declinationOffset = config.Tracking.DeclinationOffset.Value;
+        }
+
+        if (config.Backlash.RightAscensionArcseconds.IsSupported)
+        {
+            _backlashRa = config.Backlash.RightAscensionArcseconds.Value;
+        }
+
+        if (config.Backlash.DeclinationArcseconds.IsSupported)
+        {
+            _backlashDec = config.Backlash.DeclinationArcseconds.Value;
+        }
+
+        if (config.SlewRate.CurrentPeriodMicroseconds.IsSupported)
+        {
+            _slewPeriod = config.SlewRate.CurrentPeriodMicroseconds.Value;
+        }
+
+        _autoHomeAtBoot = config.Home.AutoHomeAtBoot;
+
+        if (config.Home.Axis1OffsetArcseconds.IsSupported)
+        {
+            _homeOffset1 = config.Home.Axis1OffsetArcseconds.Value;
+        }
+
+        if (config.Home.Axis2OffsetArcseconds.IsSupported)
+        {
+            _homeOffset2 = config.Home.Axis2OffsetArcseconds.Value;
+        }
+
+        if (config.Pec.WormSteps.IsSupported && config.Pec.WormSteps.Value > 0)
+        {
+            _wormSteps = config.Pec.WormSteps.Value;
+        }
+
+        if (config.MountType.IsSupported) _mountType = config.MountType.Value;
+    }
+
+    /// <summary>
+    /// Applies a section and then reads everything back, so the page shows what the
+    /// controller ended up with rather than what was typed at it.
+    /// </summary>
+    private Task ApplyAsync(Func<CancellationToken, Task> apply, string success) =>
+        RunAsync(
+            async token =>
+            {
+                await apply(token);
+
+                _config = await Session.Configuration.ReadMountAsync(token);
+                Adopt(_config);
+            },
+            success);
+
+    private Task ApplySiteAsync() =>
+        ApplyAsync(
+            async token =>
+            {
+                await Session.Configuration.WriteLatitudeAsync(_latitude, token);
+                await Session.Configuration.WriteLongitudeAsync(_longitude, token);
+                await Session.Configuration.WriteElevationAsync(_elevation, token);
+            },
+            "Site written to the controller.");
+
+    private Task ApplyClockFromComputerAsync() =>
+        ApplyAsync(
+            async token =>
+            {
+                // The offset goes first. The firmware interprets the local time it is given
+                // against the offset it currently holds, so the other order would store a
+                // time wrong by the difference between the old offset and the new one.
+                await Session.Configuration.WriteUtcOffsetAsync(OffsetToStore, token);
+                await Session.Configuration.WriteClockAsync(ComputerStandardTime, token);
+            },
+            "Controller clock set from this computer, as standard time.");
+
+    private Task ApplyLimitsAsync() =>
+        ApplyAsync(
+            async token =>
+            {
+                await Session.Configuration.WriteHorizonLimitAsync(_horizonLimit, token);
+                await Session.Configuration.WriteOverheadLimitAsync(_overheadLimit, token);
+                await Session.Configuration.WriteMeridianLimitEastAsync(_meridianEast, token);
+                await Session.Configuration.WriteMeridianLimitWestAsync(_meridianWest, token);
+            },
+            "Limits written to the controller.");
+
+    private Task ApplyMeridianAsync() =>
+        ApplyAsync(
+            async token =>
+            {
+                await Session.Configuration.WriteAutoMeridianFlipAsync(_autoFlip, token);
+                await Session.Configuration.WriteMeridianFlipHomeModeAsync(_flipMode, token);
+                await Session.Configuration.WritePreferredPierSideAsync(_preferredSide, token);
+            },
+            "Meridian flip settings written.");
+
+    private Task ContinueFlipAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.ContinueAfterPauseAsync(token),
+            "Told the mount to finish the flip.");
+
+    private Task ApplyTrackingAsync() =>
+        ApplyAsync(
+            async token =>
+            {
+                await Session.Configuration.WriteCompensationAsync(_compensation, token);
+                await Session.Configuration.WriteRightAscensionOffsetAsync(
+                    _rightAscensionOffset, token);
+                await Session.Configuration.WriteDeclinationOffsetAsync(
+                    _declinationOffset, token);
+            },
+            "Tracking settings written.");
+
+    private Task ApplyBacklashAsync() =>
+        ApplyAsync(
+            async token =>
+            {
+                await Session.Configuration.WriteRightAscensionBacklashAsync(_backlashRa, token);
+                await Session.Configuration.WriteDeclinationBacklashAsync(_backlashDec, token);
+            },
+            "Backlash written.");
+
+    private Task ApplySlewRateAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.WriteSlewPeriodAsync(_slewPeriod, token),
+            "Goto speed written.");
+
+    private Task ApplyPresetAsync(int preset) =>
+        ApplyAsync(
+            token => Session.Configuration.WriteSlewPresetAsync(preset, token),
+            "Speed preset applied.");
+
+    private Task ApplyHomeAsync() =>
+        ApplyAsync(
+            async token =>
+            {
+                await Session.Configuration.WriteAutoHomeAtBootAsync(_autoHomeAtBoot, token);
+                await Session.Configuration.WriteHomeOffsetAsync(1, _homeOffset1, token);
+                await Session.Configuration.WriteHomeOffsetAsync(2, _homeOffset2, token);
+            },
+            "Home settings written.");
+
+    private Task ToggleSenseAsync(int axis) =>
+        ApplyAsync(
+            token => Session.Configuration.ToggleHomeSenseAsync(axis, token),
+            $"Flipped the axis {axis} home sensor sense.");
+
+    private Task FindHomeAsync() =>
+        ApplyAsync(token => Session.Configuration.FindHomeAsync(token), "Homing started.");
+
+    private Task ResetAtHomeAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.ResetAtHomeAsync(token),
+            "The controller now takes this position to be home.");
+
+    private Task ParkAsync() =>
+        ApplyAsync(token => Session.Configuration.ParkAsync(token), "Parking.");
+
+    private Task UnparkAsync() =>
+        ApplyAsync(token => Session.Configuration.UnparkAsync(token), "Unparked.");
+
+    private Task SetParkPositionAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.SetParkPositionAsync(token),
+            "Park position recorded.");
+
+    private Task StartPecAsync() =>
+        ApplyAsync(token => Session.Configuration.StartPecPlaybackAsync(token), "PEC playing.");
+
+    private Task StopPecAsync() =>
+        ApplyAsync(token => Session.Configuration.StopPecAsync(token), "PEC stopped.");
+
+    private Task ArmPecAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.ArmPecRecordingAsync(token),
+            "Recording armed. It starts at the next index pulse.");
+
+    private Task SavePecAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.SavePecAsync(token),
+            "PEC data written to the controller's memory.");
+
+    private Task ClearPecAsync() =>
+        ApplyAsync(token => Session.Configuration.ClearPecAsync(token), "PEC buffer cleared.");
+
+    private Task ApplyWormStepsAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.WriteWormStepsAsync(_wormSteps, token),
+            "Worm rotation written.");
+
+    private Task SetBuzzerAsync(bool enabled) =>
+        ApplyAsync(
+            token => Session.Configuration.WriteBuzzerAsync(enabled, token),
+            enabled ? "Buzzer enabled." : "Buzzer disabled.");
+
+    private Task TestBuzzerAsync() =>
+        RunAsync(
+            token => Session.Configuration.TestBuzzerAsync(token),
+            "Beeped. If nothing was heard, this controller has no buzzer fitted.");
+
+    private Task ApplyMountTypeAsync() =>
+        ApplyAsync(
+            token => Session.Configuration.WriteMountTypeAsync(_mountType, token),
+            "Mount type stored. It takes effect at the next restart.");
+
+    /// <summary>
+    /// Restarts the controller.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately reads nothing back: the reply never arrives, because the microcontroller
+    /// resets while sending it, and the connection is gone by the time this returns.
+    /// </remarks>
+    private Task RestartControllerAsync() =>
+        RunAsync(
+            token => Session.Configuration.ResetControllerAsync(token),
+            "Restart sent. The controller takes a few seconds to come back and every client "
+            + "has to reconnect.");
+
+    private Task ClearStorageAsync() =>
+        RunAsync(
+            token => Session.Configuration.ClearNonVolatileStorageAsync(token),
+            "The controller will clear its stored settings on the next boot.");
+}

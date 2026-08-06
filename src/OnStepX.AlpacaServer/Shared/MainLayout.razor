@@ -1,0 +1,55 @@
+@inherits LayoutComponentBase
+
+<div class="page">
+    <header>
+        <div class="brand">
+            <span class="brand-name">OnStepX ASCOM</span>
+            @if (ServerRuntime.IsSimulated)
+            {
+                @* A simulated transport must be impossible to miss: otherwise somebody
+                   spends an evening wondering why the mount will not move. *@
+                <span class="badge badge-simulated" title="No real mount behind this">
+                    SIMULATED
+                </span>
+            }
+            <span class="badge @StateBadgeClass">@StateBadgeText</span>
+        </div>
+        <nav>
+            <NavLink href="" Match="NavLinkMatch.All">Dashboard</NavLink>
+            <NavLink href="connection">Connection</NavLink>
+            <NavLink href="mount">Mount</NavLink>
+            <NavLink href="focuser">Focuser</NavLink>
+            <NavLink href="rotator">Rotator</NavLink>
+            <NavLink href="weather">Weather</NavLink>
+            <NavLink href="diagnostics">Diagnostics</NavLink>
+            <NavLink href="settings">Settings file</NavLink>
+            <a href="swagger" target="_blank" rel="noopener">API</a>
+        </nav>
+    </header>
+
+    <main>
+        @Body
+    </main>
+
+    <footer>
+        <span>Alpaca port @ServerRuntime.Settings.Server.Port</span>
+        <span>Settings: @ServerRuntime.Store.Path</span>
+    </footer>
+</div>
+
+@code {
+    private string StateBadgeClass => ServerRuntime.Connection.State switch
+    {
+        OnStepX.Core.Hardware.ConnectionState.Connected => "badge-ok",
+        OnStepX.Core.Hardware.ConnectionState.Failed => "badge-error",
+        _ => "badge-idle",
+    };
+
+    private string StateBadgeText => ServerRuntime.Connection.State switch
+    {
+        OnStepX.Core.Hardware.ConnectionState.Connected => "connected",
+        OnStepX.Core.Hardware.ConnectionState.Connecting => "connecting",
+        OnStepX.Core.Hardware.ConnectionState.Failed => "not connected",
+        _ => "idle",
+    };
+}
