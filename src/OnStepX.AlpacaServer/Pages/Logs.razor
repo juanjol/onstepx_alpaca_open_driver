@@ -1,0 +1,185 @@
+@page "/logs"
+@using OnStepX.AlpacaServer.Logging
+@implements IDisposable
+
+<h1>Log</h1>
+<p class="lead">
+    What the driver is doing, as it happens. This is the log the tray and service
+    modes never had anywhere to write. To find out why a connection fails, set the
+    level to <strong>Debug</strong> and connect again: the reasons autodiscovery
+    gives up on a port are logged there, so at Information level a port held by
+    another program looks exactly like a controller that is switched off.
+</p>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>@_visible.Count of @_total lines</h2>
+            <p>
+                Newest last, keeping the most recent @LogBuffer.Capacity.
+                @(_live ? "Updating live." : "Paused, the driver keeps logging.")
+            </p>
+        </div>
+        <div class="actions actions-inline">
+            <button class="secondary small" @onclick="ToggleLive">
+                @(_live ? "Pause" : "Resume")
+            </button>
+            <a class="button small" href="logs/download" target="_blank" rel="noopener">Download</a>
+            <button class="secondary small" @onclick="ClearAsync">Clear</button>
+        </div>
+    </div>
+
+    <Field Label="Level" For="loglevel"
+           Hint="Applies from now on and takes effect immediately, no restart and no saving. Debug is the one that explains a failed connection.">
+        <select id="loglevel" @bind="Level">
+            <option value="@LogLevel.Trace">Trace, everything including each command</option>
+            <option value="@LogLevel.Debug">Debug, why each port was rejected</option>
+            <option value="@LogLevel.Information">Information, the default</option>
+            <option value="@LogLevel.Warning">Warning and worse</option>
+        </select>
+    </Field>
+
+    <Field Label="Filter" For="logfilter" Hint="Plain text match on the message or the category.">
+        <input id="logfilter" type="text" @bind="_filter" @bind:event="oninput"
+               placeholder="COM, discovery, timeout..." />
+    </Field>
+</section>
+
+<section class="card">
+    @if (_visible.Count == 0)
+    {
+        <p class="muted">
+            Nothing to show yet@(string.IsNullOrWhiteSpace(_filter) ? "." : " for that filter.")
+        </p>
+    }
+    else
+    {
+        <div class="log-scroll">
+            @foreach (LogEntry entry in _visible)
+            {
+                <div class="log-line log-@entry.Level.ToString().ToLowerInvariant()">
+                    <span class="log-time">@entry.Timestamp.ToString("HH:mm:ss.fff")</span>
+                    <span class="log-level">@Abbreviate(entry.Level)</span>
+                    <span class="log-cat">@entry.ShortCategory</span>
+                    <span class="log-msg">@entry.Message</span>
+                </div>
+
+                @if (entry.Exception is not null)
+                {
+                    <pre class="log-ex">@entry.Exception</pre>
+                }
+            }
+        </div>
+    }
+</section>
+
+@code {
+    private readonly List<LogEntry> _visible = [];
+
+    private System.Threading.Timer? _timer;
+    private bool _live = true;
+    private bool _dirty = true;
+    private string _filter = string.Empty;
+    private int _total;
+
+    private LogLevel Level
+    {
+        get => LogBuffer.MinimumLevel;
+        set => LogBuffer.MinimumLevel = value;
+    }
+
+    protected override void OnInitialized()
+    {
+        Refresh();
+
+        LogBuffer.Changed += OnChanged;
+
+        // Coalesced onto a timer rather than rendering per line. A failing
+        // autodiscovery sweep emits bursts of entries from several probe
+        // threads at once, and re-rendering on each one would spend more time
+        // in the UI than in the driver.
+        _timer = new System.Threading.Timer(_ => Tick(), null, 500, 500);
+    }
+
+    private void OnChanged() => _dirty = true;
+
+    private void Tick()
+    {
+        if (!_live || !_dirty)
+        {
+            return;
+        }
+
+        _dirty = false;
+
+        // The event arrives on whatever thread logged, so the render has to be
+        // marshalled back onto the Blazor circuit's own context.
+        _ = InvokeAsync(() =>
+        {
+            Refresh();
+            StateHasChanged();
+        });
+    }
+
+    private void Refresh()
+    {
+        IReadOnlyList<LogEntry> all = LogBuffer.Snapshot();
+        _total = all.Count;
+
+        _visible.Clear();
+
+        foreach (LogEntry entry in all)
+        {
+            if (Matches(entry))
+            {
+                _visible.Add(entry);
+            }
+        }
+    }
+
+    private bool Matches(LogEntry entry)
+    {
+        if (string.IsNullOrWhiteSpace(_filter))
+        {
+            return true;
+        }
+
+        return entry.Message.Contains(_filter, StringComparison.OrdinalIgnoreCase)
+            || entry.Category.Contains(_filter, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ToggleLive()
+    {
+        _live = !_live;
+
+        if (_live)
+        {
+            Refresh();
+        }
+    }
+
+    private Task ClearAsync()
+    {
+        LogBuffer.Clear();
+        Refresh();
+
+        return Task.CompletedTask;
+    }
+
+    private static string Abbreviate(LogLevel level) => level switch
+    {
+        LogLevel.Trace => "TRC",
+        LogLevel.Debug => "DBG",
+        LogLevel.Information => "INF",
+        LogLevel.Warning => "WRN",
+        LogLevel.Error => "ERR",
+        LogLevel.Critical => "CRT",
+        _ => "---",
+    };
+
+    public void Dispose()
+    {
+        LogBuffer.Changed -= OnChanged;
+        _timer?.Dispose();
+    }
+}

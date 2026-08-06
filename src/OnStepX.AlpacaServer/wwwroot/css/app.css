@@ -616,3 +616,88 @@ footer {
     cursor: pointer;
     float: right;
 }
+
+/* Log page. Monospaced and dense: it is read by scanning, not by reading. */
+.log-scroll {
+    max-height: 60vh;
+    overflow: auto;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 0.65rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+.log-line {
+    display: flex;
+    gap: 0.6rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    padding: 0.05rem 0;
+}
+
+.log-time {
+    color: var(--muted);
+    flex: 0 0 auto;
+}
+
+.log-level {
+    flex: 0 0 2.2rem;
+    font-weight: 600;
+}
+
+.log-cat {
+    flex: 0 0 auto;
+    max-width: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+}
+
+.log-msg {
+    flex: 1 1 auto;
+}
+
+.log-ex {
+    margin: 0.1rem 0 0.4rem 0;
+    padding: 0.4rem 0.6rem;
+    background: var(--error-soft);
+    color: var(--error);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    overflow-x: auto;
+}
+
+.log-warning .log-level {
+    color: var(--warn-text);
+    background: var(--warn-soft);
+}
+
+.log-error .log-level,
+.log-critical .log-level {
+    color: var(--error);
+}
+
+.log-debug,
+.log-trace {
+    color: var(--muted);
+}
+
+/* Anchor styled as a button, for the download link. */
+a.button {
+    display: inline-block;
+    text-decoration: none;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    padding: 0.35rem 0.75rem;
+    font-size: 0.85rem;
+}
+
+a.button:hover {
+    background: var(--surface-alt);
+}

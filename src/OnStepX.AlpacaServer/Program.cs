@@ -6,6 +6,7 @@ using ASCOM.Alpaca;
 using ASCOM.Alpaca.Razor;
 using H.NotifyIcon.Core;
 using OnStepX.AlpacaServer;
+using OnStepX.AlpacaServer.Logging;
 using OnStepX.Core.Config;
 
 CommandLineOptions options = CommandLine.Parse(args);
@@ -57,6 +58,13 @@ if (!isWindowsTray)
     });
 }
 
+// Unconditionally, unlike the console above. Tray and service are the two
+// modes the installer offers and neither has anywhere to write, so without
+// this the installed driver produces no diagnostics at all and a problem can
+// only be reproduced by stopping it and rerunning the exe from a terminal.
+builder.Logging.AddProvider(new LogBufferProvider());
+builder.Logging.AddFilter<LogBufferProvider>(LogBufferProvider.ShouldLog);
+
 if (options.Mode == HostMode.Service)
 {
     // A service has no console, so the host has to own the lifetime. Windows and systemd
@@ -80,8 +88,21 @@ using ILoggerFactory bootLoggerFactory = LoggerFactory.Create(b =>
     {
         b.AddSimpleConsole();
     }
+
+    // Same buffer as the host's factory above. The devices and the controller
+    // connection log through this one, so leaving it out would mean the log
+    // page showed web traffic and none of the protocol traffic that matters.
+    b.AddProvider(new LogBufferProvider());
+    b.AddFilter<LogBufferProvider>(LogBufferProvider.ShouldLog);
 });
 ServerRuntime.Initialise(options, bootLoggerFactory);
+
+// The dead "Trace" checkbox on the connection page finally does something: the
+// reasons autodiscovery gives up on a port are all logged at debug level, so
+// at information level a busy port and an absent board look identical.
+LogBuffer.MinimumLevel = ServerRuntime.Settings.TraceEnabled
+    ? LogLevel.Debug
+    : LogLevel.Information;
 
 ILogger bootLogger = bootLoggerFactory.CreateLogger("OnStepX");
 
@@ -165,6 +186,13 @@ app.MapGet("/settings/export", () =>
         "application/json",
         "onstepx-settings.json");
 });
+
+// Log download, so a problem can be sent on as a file rather than selected by
+// hand out of a scrolling page.
+app.MapGet("/logs/download", () => Results.File(
+    System.Text.Encoding.UTF8.GetBytes(LogBuffer.ToText()),
+    "text/plain",
+    $"onstepx-log-{DateTime.Now:yyyyMMdd-HHmmss}.txt"));
 
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
