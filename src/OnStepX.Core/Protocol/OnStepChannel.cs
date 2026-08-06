@@ -44,6 +44,7 @@ public sealed class OnStepChannel : IAsyncDisposable
 
     private char _sequence = 'a';
     private bool _disposed;
+    private bool _ownsTransport = true;
 
     /// <summary>Creates the channel over an already built transport.</summary>
     public OnStepChannel(
@@ -63,6 +64,23 @@ public sealed class OnStepChannel : IAsyncDisposable
 
     /// <summary>Underlying transport, for querying state and description.</summary>
     public ITransport Transport => _transport;
+
+    /// <summary>
+    /// Gives up ownership of the transport and hands it over still open.
+    /// </summary>
+    /// <remarks>
+    /// Autodiscovery needs this. Closing a serial port and reopening it pulses
+    /// DTR and RTS, which resets the boards that wire those lines to EN and
+    /// GPIO0, so a probe that closes its port leaves the caller reconnecting to
+    /// a controller that is busy booting. Handing the live transport over means
+    /// the port is opened once for the whole connect.
+    /// </remarks>
+    internal ITransport DetachTransport()
+    {
+        _ownsTransport = false;
+
+        return _transport;
+    }
 
     /// <summary>Number of completed transactions, for diagnostics.</summary>
     public long TransactionCount { get; private set; }
@@ -581,7 +599,11 @@ public sealed class OnStepChannel : IAsyncDisposable
 
         _disposed = true;
 
-        await _transport.DisposeAsync().ConfigureAwait(false);
+        if (_ownsTransport)
+        {
+            await _transport.DisposeAsync().ConfigureAwait(false);
+        }
+
         _gate.Dispose();
     }
 }

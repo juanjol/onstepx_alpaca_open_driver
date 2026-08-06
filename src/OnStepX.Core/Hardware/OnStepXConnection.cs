@@ -329,7 +329,7 @@ public sealed class OnStepXConnection : IAsyncDisposable
                         return new SerialTransport(connection.PortName, connection.BaudRate);
                     }
 
-                    DiscoveredController? found = await DiscoverAsync(connection, cancellationToken)
+                    DiscoveredConnection? found = await DiscoverAsync(connection, cancellationToken)
                         .ConfigureAwait(false);
 
                     if (found is null)
@@ -339,9 +339,13 @@ public sealed class OnStepXConnection : IAsyncDisposable
                             "Check that it is powered on and connected, or set the port manually.");
                     }
 
-                    _logger.LogInformation("Autodiscovery: {Found}", found);
+                    _logger.LogInformation("Autodiscovery: {Found}", found.Controller);
 
-                    return new SerialTransport(found.PortName, found.BaudRate);
+                    // Deliberately the port autodiscovery already has open. Closing
+                    // it and reopening pulses DTR and RTS, which resets the boards
+                    // that wire those lines to EN and GPIO0, and the identity read
+                    // that follows would then time out against a booting board.
+                    return found.Transport;
                 }
 
             default:
@@ -350,7 +354,7 @@ public sealed class OnStepXConnection : IAsyncDisposable
         }
     }
 
-    private async Task<DiscoveredController?> DiscoverAsync(
+    private async Task<DiscoveredConnection?> DiscoverAsync(
         ConnectionSettings connection,
         CancellationToken cancellationToken)
     {
@@ -368,29 +372,11 @@ public sealed class OnStepXConnection : IAsyncDisposable
             UseErrorCorrection = false,
         };
 
-        // If a port is configured it is tried before anything else: this is
-        // the normal case and saves scanning everything.
-        if (!string.IsNullOrWhiteSpace(connection.PortName))
-        {
-            DiscoveredController? direct = await discovery
-                .ProbeAsync(connection.PortName, connection.BaudRate, options, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (direct is not null)
-            {
-                return direct;
-            }
-
-            _logger.LogInformation(
-                "Configured port {Port} did not respond, searching the others",
-                connection.PortName);
-        }
-
-        IReadOnlyList<DiscoveredController> results = await discovery
-            .DiscoverAsync(options, progress: null, cancellationToken)
+        // ConnectAsync tries the configured port first and, crucially, hands
+        // back the port it found still open, so connecting opens it once.
+        return await discovery
+            .ConnectAsync(connection.PortName, connection.BaudRate, options, cancellationToken)
             .ConfigureAwait(false);
-
-        return results.Count > 0 ? results[0] : null;
     }
 
     private static async Task<ControllerIdentity> ReadIdentityAsync(

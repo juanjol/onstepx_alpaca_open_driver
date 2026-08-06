@@ -9,9 +9,15 @@ namespace OnStepX.Core.Tests;
 /// <summary>
 /// Transport that counts opens and closes, to verify reference counting.
 /// </summary>
-internal sealed class CountingTransport : ITransport
+/// <remarks>
+/// Opens are also controller resets on real hardware: every open of a serial
+/// port pulses DTR and RTS, which resets the boards that wire those lines to
+/// EN and GPIO0. Counting them is how the discovery tests pin down that
+/// connecting opens the port once.
+/// </remarks>
+internal sealed class CountingTransport(ITransport? inner = null) : ITransport
 {
-    private readonly FakeOnStepDevice _inner = new();
+    private readonly ITransport _inner = inner ?? new FakeOnStepDevice();
 
     public int OpenCount { get; private set; }
 

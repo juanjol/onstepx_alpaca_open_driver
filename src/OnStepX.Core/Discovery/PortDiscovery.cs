@@ -50,6 +50,37 @@ public sealed record PortDiscoveryOptions
     /// the lowest common denominator and is enough for identification.
     /// </summary>
     public bool UseErrorCorrection { get; init; }
+
+    /// <summary>
+    /// Hands the matching port back still open instead of closing it.
+    /// </summary>
+    /// <remarks>
+    /// Only for connecting, which is why it is internal. Closing a serial port
+    /// and reopening it pulses DTR and RTS, resetting the boards that wire
+    /// those lines to EN and GPIO0, so a probe that closes leaves the caller
+    /// talking to a controller that is busy booting.
+    /// </remarks>
+    internal bool KeepTransportOpen { get; init; }
+}
+
+/// <summary>
+/// A controller found by autodiscovery, with its port still open.
+/// </summary>
+/// <remarks>
+/// The transport is already open and has just held a successful conversation
+/// with the controller, so the caller must use it as it is rather than
+/// reopening the port. Disposing this disposes the transport.
+/// </remarks>
+public sealed class DiscoveredConnection : IAsyncDisposable
+{
+    /// <summary>What answered, and where.</summary>
+    public required DiscoveredController Controller { get; init; }
+
+    /// <summary>The open transport that answered.</summary>
+    public required ITransport Transport { get; init; }
+
+    /// <inheritdoc />
+    public ValueTask DisposeAsync() => Transport.DisposeAsync();
 }
 
 /// <summary>Discovery progress, for the UI.</summary>
@@ -140,8 +171,18 @@ public sealed class PortDiscovery
         IProgress<PortDiscoveryProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        options ??= new PortDiscoveryOptions();
+        IReadOnlyList<ProbeOutcome> outcomes = await DiscoverCoreAsync(
+            options ?? new PortDiscoveryOptions(), progress, cancellationToken)
+            .ConfigureAwait(false);
 
+        return [.. outcomes.Select(o => o.Controller)];
+    }
+
+    private async Task<IReadOnlyList<ProbeOutcome>> DiscoverCoreAsync(
+        PortDiscoveryOptions options,
+        IProgress<PortDiscoveryProgress>? progress,
+        CancellationToken cancellationToken)
+    {
         IReadOnlyList<SerialPortInfo> candidates = PortRanking
             .Prioritise(_enumerator.Enumerate())
             .Where(p => !options.ExcludedPorts.Contains(p.PortName, StringComparer.OrdinalIgnoreCase))
@@ -159,7 +200,7 @@ public sealed class PortDiscovery
 
         int[] baudRates = BuildBaudSweep(options);
 
-        var found = new List<DiscoveredController>();
+        var found = new List<ProbeOutcome>();
         var foundLock = new object();
         int processed = 0;
 
@@ -184,7 +225,7 @@ public sealed class PortDiscovery
 
             try
             {
-                DiscoveredController? result = await ProbePortAsync(
+                ProbeOutcome? result = await ProbePortAsync(
                     port, baudRates, options, progress, candidates.Count, stopEarly.Token)
                     .ConfigureAwait(false);
 
@@ -202,7 +243,7 @@ public sealed class PortDiscovery
                         PortsProcessed = processed,
                         PortsTotal = candidates.Count,
                         CurrentPort = port.PortName,
-                        Found = result,
+                        Found = result?.Controller,
                     });
                 }
 
@@ -234,7 +275,7 @@ public sealed class PortDiscovery
             .ToDictionary(x => x.PortName, x => x.Index, StringComparer.OrdinalIgnoreCase);
 
         return found
-            .OrderBy(f => order.TryGetValue(f.PortName, out int i) ? i : int.MaxValue)
+            .OrderBy(f => order.TryGetValue(f.Controller.PortName, out int i) ? i : int.MaxValue)
             .ToList();
     }
 
@@ -249,11 +290,86 @@ public sealed class PortDiscovery
     {
         options ??= new PortDiscoveryOptions();
 
-        return await ProbeOneAsync(
+        ProbeOutcome? outcome = await ProbeOneAsync(
             new SerialPortInfo { PortName = portName },
             baudRate,
             options,
             cancellationToken).ConfigureAwait(false);
+
+        return outcome?.Controller;
+    }
+
+    /// <summary>
+    /// Finds a controller to connect to and hands its port back still open.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The configured port is tried first, then everything else, which is the
+    /// same order the listing uses. What is different is that the port that
+    /// answered is never closed: closing it and reopening it pulses DTR and
+    /// RTS, and on the boards that wire those to EN and GPIO0 that resets the
+    /// controller, so the caller would be talking to a board that is booting.
+    /// One connect, one open.
+    /// </para>
+    /// <para>
+    /// The caller owns the returned transport and must dispose it.
+    /// </para>
+    /// </remarks>
+    public async Task<DiscoveredConnection?> ConnectAsync(
+        string? preferredPort,
+        int preferredBaudRate,
+        PortDiscoveryOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        PortDiscoveryOptions probeOptions = (options ?? new PortDiscoveryOptions()) with
+        {
+            KeepTransportOpen = true,
+        };
+
+        if (!string.IsNullOrWhiteSpace(preferredPort))
+        {
+            ProbeOutcome? direct = await ProbeOneAsync(
+                new SerialPortInfo { PortName = preferredPort },
+                preferredBaudRate,
+                probeOptions,
+                cancellationToken).ConfigureAwait(false);
+
+            if (direct?.Transport is not null)
+            {
+                return new DiscoveredConnection
+                {
+                    Controller = direct.Controller,
+                    Transport = direct.Transport,
+                };
+            }
+
+            _logger.LogInformation(
+                "Configured port {Port} did not respond, searching the others", preferredPort);
+        }
+
+        IReadOnlyList<ProbeOutcome> outcomes = await DiscoverCoreAsync(
+            probeOptions, progress: null, cancellationToken).ConfigureAwait(false);
+
+        ProbeOutcome? winner = outcomes.FirstOrDefault(o => o.Transport is not null);
+
+        // StopAtFirstMatch races: two ports can both answer before the early
+        // stop lands. Everything that is not the winner gets closed here, or
+        // the losing ports would stay held open for the life of the process.
+        foreach (ProbeOutcome other in outcomes)
+        {
+            if (!ReferenceEquals(other, winner) && other.Transport is not null)
+            {
+                await other.Transport.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+
+        return winner?.Transport is null
+            ? null
+            : new DiscoveredConnection
+            {
+                Controller = winner.Controller,
+                Transport = winner.Transport,
+            };
     }
 
     private static int[] BuildBaudSweep(PortDiscoveryOptions options)
@@ -278,7 +394,7 @@ public sealed class PortDiscovery
         return [.. sweep];
     }
 
-    private async Task<DiscoveredController?> ProbePortAsync(
+    private async Task<ProbeOutcome?> ProbePortAsync(
         SerialPortInfo port,
         int[] baudRates,
         PortDiscoveryOptions options,
@@ -298,7 +414,7 @@ public sealed class PortDiscovery
                 CurrentBaudRate = baud,
             });
 
-            DiscoveredController? result = await ProbeOneAsync(port, baud, options, cancellationToken)
+            ProbeOutcome? result = await ProbeOneAsync(port, baud, options, cancellationToken)
                 .ConfigureAwait(false);
 
             if (result is not null)
@@ -310,7 +426,10 @@ public sealed class PortDiscovery
         return null;
     }
 
-    private async Task<DiscoveredController?> ProbeOneAsync(
+    /// <summary>A match, plus its port if the caller asked to keep it open.</summary>
+    private sealed record ProbeOutcome(DiscoveredController Controller, ITransport? Transport);
+
+    private async Task<ProbeOutcome?> ProbeOneAsync(
         SerialPortInfo port,
         int baudRate,
         PortDiscoveryOptions options,
@@ -318,6 +437,7 @@ public sealed class PortDiscovery
     {
         var stopwatch = Stopwatch.StartNew();
         ITransport? transport = null;
+        OnStepChannel? channel = null;
 
         try
         {
@@ -333,7 +453,7 @@ public sealed class PortDiscovery
 
             await transport.OpenAsync(timeout.Token).ConfigureAwait(false);
 
-            await using var channel = new OnStepChannel(transport, new OnStepChannelOptions
+            channel = new OnStepChannel(transport, new OnStepChannelOptions
             {
                 UseErrorCorrection = options.UseErrorCorrection,
                 Timeout = options.ProbeTimeout,
@@ -378,7 +498,7 @@ public sealed class PortDiscovery
                 "Found {Product} {Version} on {Port} at {Baud} baud",
                 product, version, port.PortName, baudRate);
 
-            return new DiscoveredController
+            var controller = new DiscoveredController
             {
                 PortName = port.PortName,
                 BaudRate = baudRate,
@@ -387,6 +507,13 @@ public sealed class PortDiscovery
                 FriendlyName = port.FriendlyName,
                 ProbeDuration = stopwatch.Elapsed,
             };
+
+            // Handing the live port over is what stops the controller being
+            // reset a second time: the caller carries on over this same open
+            // port instead of closing it and pulsing DTR and RTS again.
+            return new ProbeOutcome(
+                controller,
+                options.KeepTransportOpen ? channel.DetachTransport() : null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -403,7 +530,13 @@ public sealed class PortDiscovery
         }
         finally
         {
-            if (transport is not null)
+            // The channel owns the transport once it exists, and closes it
+            // unless DetachTransport handed it to the caller above.
+            if (channel is not null)
+            {
+                await channel.DisposeAsync().ConfigureAwait(false);
+            }
+            else if (transport is not null)
             {
                 await transport.DisposeAsync().ConfigureAwait(false);
             }

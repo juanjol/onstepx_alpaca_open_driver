@@ -142,6 +142,104 @@ public class PortDiscoveryTests
         new() { PortName = name, FriendlyName = friendly, VendorId = vid };
 
     [Fact]
+    public async Task ConnectingOpensTheConfiguredPortOnceAndHandsItBackOpen()
+    {
+        // The regression this exists for: discovery used to close the port it had
+        // just talked to, and connecting reopened it. That second open pulses DTR
+        // and RTS, resetting the board, so the identity read that came next timed
+        // out against a controller busy booting.
+        var enumerator = new FakeEnumerator(
+            Port("COM7", "CP210x", PortRanking.Vendors.SiliconLabs));
+
+        CountingTransport? opened = null;
+
+        var discovery = new PortDiscovery(
+            enumerator,
+            (port, baud) => opened = new CountingTransport());
+
+        await using DiscoveredConnection? connection =
+            await discovery.ConnectAsync("COM7", 9600, FastOptions());
+
+        Assert.NotNull(connection);
+        Assert.Equal("COM7", connection.Controller.PortName);
+        Assert.Equal("On-Step", connection.Controller.ProductName);
+
+        // Still open, and opened exactly once: one connect, one board reset.
+        Assert.True(connection.Transport.IsOpen);
+        Assert.Equal(1, opened!.OpenCount);
+        Assert.Equal(0, opened.DisposeCount);
+    }
+
+    [Fact]
+    public async Task DisposingTheConnectionClosesThePort()
+    {
+        var enumerator = new FakeEnumerator(Port("COM7"));
+
+        CountingTransport? opened = null;
+
+        var discovery = new PortDiscovery(
+            enumerator,
+            (port, baud) => opened = new CountingTransport());
+
+        DiscoveredConnection? connection =
+            await discovery.ConnectAsync("COM7", 9600, FastOptions());
+
+        Assert.NotNull(connection);
+        await connection.DisposeAsync();
+
+        Assert.Equal(1, opened!.DisposeCount);
+    }
+
+    [Fact]
+    public async Task ListingStillClosesEveryPortItOpens()
+    {
+        // Only connecting keeps a port open. Listing must not leave the
+        // controller held, or the setup page would lock out the driver.
+        var enumerator = new FakeEnumerator(Port("COM7"));
+
+        CountingTransport? opened = null;
+
+        var discovery = new PortDiscovery(
+            enumerator,
+            (port, baud) => opened = new CountingTransport());
+
+        IReadOnlyList<DiscoveredController> found =
+            await discovery.DiscoverAsync(FastOptions());
+
+        Assert.Single(found);
+        Assert.Equal(1, opened!.DisposeCount);
+        Assert.False(opened.IsOpen);
+    }
+
+    [Fact]
+    public async Task ConnectingClosesThePortsThatDidNotAnswer()
+    {
+        // The configured port is wrong, so the sweep finds the controller
+        // elsewhere. The silent port must not be left held open.
+        var enumerator = new FakeEnumerator(
+            Port("COM3"),
+            Port("COM7", "CP210x", PortRanking.Vendors.SiliconLabs));
+
+        var transports = new Dictionary<string, CountingTransport>();
+
+        var discovery = new PortDiscovery(
+            enumerator,
+            (port, baud) => transports[port] = new CountingTransport(
+                port == "COM7" ? new FakeOnStepDevice() : new SilentTransport(port)));
+
+        await using DiscoveredConnection? connection =
+            await discovery.ConnectAsync("COM3", 9600, FastOptions(stopAtFirst: true));
+
+        Assert.NotNull(connection);
+        Assert.Equal("COM7", connection.Controller.PortName);
+        Assert.True(connection.Transport.IsOpen);
+
+        // The one that answered stays open, the one that did not is closed.
+        Assert.Equal(0, transports["COM7"].DisposeCount);
+        Assert.True(transports["COM3"].DisposeCount > 0);
+    }
+
+    [Fact]
     public async Task FindsTheControllerOnAnArbitraryPort()
     {
         var enumerator = new FakeEnumerator(
