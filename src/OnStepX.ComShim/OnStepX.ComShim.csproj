@@ -18,7 +18,20 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
-    <ComVisible>false</ComVisible>
+    <!--
+      COM visibility is declared in Properties/AssemblyInfo.cs, not through
+      the ComVisible property, because SDK style projects never turn that
+      property into an assembly attribute.
+
+      ASCOM.Alpaca.Components drags in System.Text.Json and its own chain of
+      System.* packages, all of them newer than what net48 ships. Without
+      these two the build produces no OnStepX.ComShim.exe.config and the
+      process fails to load them at run time. Both are needed: the first
+      computes the redirects, the second is what writes them out for an
+      executable.
+    -->
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
     <Description>Local Server COM that exposes the Alpaca server's OnStepX devices to COM-only clients. It does not talk to the mount: it is a localhost Alpaca client.</Description>
   </PropertyGroup>
 
