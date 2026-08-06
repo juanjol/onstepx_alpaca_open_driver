@@ -124,10 +124,9 @@ public sealed class OnStepRotator : OnStepDeviceBase, IRotatorV4
 
         await _poller.StartAsync(cancellationToken).ConfigureAwait(false);
 
-        if (settings.Rotator.MoveToPositionOnConnect)
+        if (settings.Rotator.SetPositionOnConnect)
         {
-            await MoveOnConnectAsync(settings.Rotator.PositionOnConnect, cancellationToken)
-                .ConfigureAwait(false);
+            DeclarePositionOnConnect(settings.Rotator.PositionOnConnect);
         }
 
         Logger.LogInformation(
@@ -136,34 +135,31 @@ public sealed class OnStepRotator : OnStepDeviceBase, IRotatorV4
     }
 
     /// <summary>
-    /// Sends the rotator to its configured start angle.
+    /// Declares, without moving the rotator, that its current mechanical angle is the
+    /// configured sky angle.
     /// </summary>
     /// <remarks>
-    /// The configured value is a <b>mechanical</b> angle, because that is what survives
-    /// a restart: the sky angle for a given mechanical position depends on where the
-    /// telescope is pointing.
+    /// The same offset the client's own <see cref="Sync"/> would establish, computed
+    /// from whatever the rotator physically reads right now, typically its mechanical
+    /// zero after a fresh power-up.
     /// </remarks>
-    private async Task MoveOnConnectAsync(double mechanicalAngle, CancellationToken cancellationToken)
+    private void DeclarePositionOnConnect(double skyAngle)
     {
         try
         {
             RotatorSnapshot snapshot = _poller.Current!;
-            double clamped = Math.Clamp(mechanicalAngle, snapshot.MinAngle, snapshot.MaxAngle);
+            double offset = Normalise(skyAngle - snapshot.MechanicalAngle);
 
-            if (Math.Abs(clamped - mechanicalAngle) > 1e-6)
-            {
-                Logger.LogWarning(
-                    "Configured start angle {Requested} is outside the travel, using {Used}",
-                    mechanicalAngle, clamped);
-            }
+            Settings.Rotator.SyncOffset = offset;
 
-            Logger.LogInformation("Moving rotator to its configured start angle {Angle}", clamped);
-
-            await MoveMechanicalRawAsync(clamped, cancellationToken).ConfigureAwait(false);
+            Logger.LogInformation(
+                "Rotator position declared on connect: mechanical {Mechanical} is sky angle " +
+                "{Sky}, offset {Offset}",
+                snapshot.MechanicalAngle, skyAngle, offset);
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Could not move the rotator to its configured start angle");
+            Logger.LogWarning(ex, "Could not declare the rotator's configured position on connect");
         }
     }
 

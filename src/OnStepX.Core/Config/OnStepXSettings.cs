@@ -127,10 +127,13 @@ public sealed record FocuserSettings
 /// <summary>Rotator settings.</summary>
 public sealed record RotatorSettings
 {
-    /// <summary>Moves to a specific angle when connecting.</summary>
-    public bool MoveToPositionOnConnect { get; set; }
+    /// <summary>
+    /// Declares, on connect, that the rotator's current mechanical angle is a specific
+    /// sky angle, without moving it.
+    /// </summary>
+    public bool SetPositionOnConnect { get; set; }
 
-    /// <summary>Target mechanical angle when connecting, in degrees.</summary>
+    /// <summary>Sky angle declared on connect, in degrees.</summary>
     public double PositionOnConnect { get; set; }
 
     /// <summary>Reverses the rotation direction seen by the client.</summary>

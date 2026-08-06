@@ -79,7 +79,7 @@ public sealed class SettingsStoreTests : IDisposable
             },
             Rotator = new RotatorSettings
             {
-                MoveToPositionOnConnect = true,
+                SetPositionOnConnect = true,
                 PositionOnConnect = -45.5,
                 Reverse = true,
             },

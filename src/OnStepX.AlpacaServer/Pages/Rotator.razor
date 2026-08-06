@@ -160,16 +160,16 @@
         <input id="rsyncoffset" type="number" step="any" @bind="Working.Rotator.SyncOffset" />
     </Field>
 
-    <Field Label="Move to position on connect"
-           Hint="Off by default: a rotator that moves right after connecting surprises some clients and can interfere with conformance checks.">
+    <Field Label="Set position on connect"
+           Hint="Declares the sky angle below without moving the rotator, based on whatever mechanical angle it reads right now, typically its mechanical zero after a fresh power-up.">
         <div class="check">
-            <input id="rmoveonconnect" type="checkbox"
-                   @bind="Working.Rotator.MoveToPositionOnConnect" />
-            <label for="rmoveonconnect">Move to a target angle on connect</label>
+            <input id="rsetonconnect" type="checkbox"
+                   @bind="Working.Rotator.SetPositionOnConnect" />
+            <label for="rsetonconnect">Declare the current angle on connect</label>
         </div>
     </Field>
 
-    <Field Label="Target angle" For="rposonconnect" Unit="degrees, mechanical">
+    <Field Label="Position on connect" For="rposonconnect" Unit="degrees, sky">
         <input id="rposonconnect" type="number" step="any"
                @bind="Working.Rotator.PositionOnConnect" />
     </Field>

@@ -254,9 +254,9 @@ public sealed class OnStepRotatorTests : DeviceTestBase
     }
 
     [Fact]
-    public void MoveToPositionOnConnectIsHonouredWithoutBlockingTheConnection()
+    public void SetPositionOnConnectDeclaresTheAngleWithoutMoving()
     {
-        Settings.Rotator.MoveToPositionOnConnect = true;
+        Settings.Rotator.SetPositionOnConnect = true;
         Settings.Rotator.PositionOnConnect = 60;
         Device.Rotator.Angle.SetPosition(0);
 
@@ -264,10 +264,11 @@ public sealed class OnStepRotatorTests : DeviceTestBase
         rotator.Connected = true;
 
         Assert.True(rotator.Connected);
+        Assert.False(rotator.IsMoving);
 
-        WaitUntil(() => !rotator.IsMoving, "start angle move", 30_000);
-
-        Assert.Equal(60f, rotator.MechanicalPosition, precision: 1);
+        Assert.Equal(0f, rotator.MechanicalPosition, precision: 1);
+        Assert.Equal(60f, rotator.Position, precision: 1);
+        Assert.Equal(60, Settings.Rotator.SyncOffset, precision: 1);
     }
 
     [Fact]
