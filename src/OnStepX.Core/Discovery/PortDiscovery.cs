@@ -266,7 +266,21 @@ public sealed class PortDiscovery
 
         // If the user cancelled, it must propagate. An early stop from
         // having found something must not.
-        cancellationToken.ThrowIfCancellationRequested();
+        if (cancellationToken.IsCancellationRequested)
+        {
+            // Throwing here would strand any port kept open for the caller,
+            // and a held serial port stays held for the life of the process,
+            // so the next attempt would find it busy and never see the mount.
+            foreach (ProbeOutcome stranded in found)
+            {
+                if (stranded.Transport is not null)
+                {
+                    await stranded.Transport.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+        }
 
         // Reordered by port priority, because concurrency alters the
         // completion order.
