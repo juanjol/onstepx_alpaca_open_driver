@@ -7,6 +7,11 @@
     <OutputType>Exe</OutputType>
     <UserSecretsId>onstepx-alpaca-server</UserSecretsId>
     <Description>ASCOM Alpaca server for OnStepX: REST API, UDP discovery and Blazor configuration UI.</Description>
+    <!--
+      Placeholder artwork, not final branding. Swap this file whenever real icon
+      art exists; the tray icon in Program.cs reads it back from the built exe.
+    -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -36,6 +41,14 @@
     -->
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="8.0.1" />
+    <!--
+      The core H.NotifyIcon package (not .WinForms/.Wpf): a from-scratch
+      Shell_NotifyIcon wrapper with no UI framework dependency, so it stays on
+      plain net8.0. It has no net8.0 asset group; NuGet resolves it to the
+      netstandard2.0 build, which is fine since nothing in it is called on
+      non-Windows (every use is behind OperatingSystem.IsWindows() in Program.cs).
+    -->
+    <PackageReference Include="H.NotifyIcon" Version="2.4.1" />
   </ItemGroup>
 
   <ItemGroup>

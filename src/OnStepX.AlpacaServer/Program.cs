@@ -1,7 +1,10 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using ASCOM.Alpaca;
 using ASCOM.Alpaca.Razor;
+using H.NotifyIcon.Core;
 using OnStepX.AlpacaServer;
 using OnStepX.Core.Config;
 
@@ -27,14 +30,32 @@ if (options.UnknownArgument is not null)
 CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
 CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;
 
+// Tray mode is Windows only (help text says so); elsewhere it just runs as console. The
+// check happens once, up front, because it also decides whether console logging can be
+// wired up at all below.
+bool isWindowsTray = options.Mode == HostMode.Tray && OperatingSystem.IsWindows();
+
+if (isWindowsTray)
+{
+    // This exe's OutputType is Exe, not WinExe, because the same binary is also the
+    // console/service entry point, so Windows still allocates a console window at
+    // process start. FreeConsole closes it before anything writes to it, which has to
+    // happen before the console logging provider is wired up below.
+    NativeMethods.FreeConsole();
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Logging.ClearProviders();
-builder.Logging.AddSimpleConsole(o =>
+
+if (!isWindowsTray)
 {
-    o.SingleLine = true;
-    o.TimestampFormat = "HH:mm:ss ";
-});
+    builder.Logging.AddSimpleConsole(o =>
+    {
+        o.SingleLine = true;
+        o.TimestampFormat = "HH:mm:ss ";
+    });
+}
 
 if (options.Mode == HostMode.Service)
 {
@@ -53,7 +74,13 @@ if (options.Mode == HostMode.Service)
 // Global state is initialised before the host is built, because the official REST layer
 // resolves devices through DeviceManager, which is static and has to be populated before
 // any request arrives.
-using ILoggerFactory bootLoggerFactory = LoggerFactory.Create(b => b.AddSimpleConsole());
+using ILoggerFactory bootLoggerFactory = LoggerFactory.Create(b =>
+{
+    if (!isWindowsTray)
+    {
+        b.AddSimpleConsole();
+    }
+});
 ServerRuntime.Initialise(options, bootLoggerFactory);
 
 ILogger bootLogger = bootLoggerFactory.CreateLogger("OnStepX");
@@ -61,6 +88,11 @@ ILogger bootLogger = bootLoggerFactory.CreateLogger("OnStepX");
 if (ServerRuntime.SettingsWarning is not null)
 {
     bootLogger.LogWarning("{Warning}", ServerRuntime.SettingsWarning);
+}
+
+if (options.Mode == HostMode.Tray && !OperatingSystem.IsWindows())
+{
+    bootLogger.LogWarning("Tray mode is Windows only. Running in console mode instead.");
 }
 
 if (ServerRuntime.IsSimulated)
@@ -152,6 +184,61 @@ startLogger.LogInformation(
     options.Mode,
     ServerRuntime.IsSimulated ? " (SIMULATED)" : string.Empty);
 
+if (isWindowsTray)
+{
+    // Always localhost here, regardless of AllowRemoteAccess: the bind host can be "*",
+    // which is not something a browser can navigate to.
+    string setupUrl = $"http://localhost:{ServerRuntime.Settings.Server.Port}/";
+
+    var trayIcon = new TrayIconWithContextMenu
+    {
+        ToolTip = "OnStepX ASCOM",
+        // Reads the icon back from this same exe's own ApplicationIcon resource rather
+        // than shipping the .ico a second time as a loose file. Under "dotnet run" the
+        // running process is dotnet.exe, so this falls back to its icon, harmless since
+        // installed use is always the published exe.
+        Icon = NativeMethods.ExtractIcon(0, Environment.ProcessPath ?? "OnStepX.AlpacaServer.exe", 0),
+        ContextMenu = new PopupMenu
+        {
+            Items =
+            {
+                new PopupMenuItem(
+                    "Open setup page",
+                    (_, _) => Process.Start(new ProcessStartInfo(setupUrl) { UseShellExecute = true })),
+                new PopupMenuItem("Exit", (_, _) => app.Lifetime.StopApplication()),
+            },
+        },
+    };
+    trayIcon.Create();
+
+    // The tray runs its own message loop on a foreground thread, so without disposing it
+    // here that thread (and the process) would never exit after "Exit" is clicked.
+    app.Lifetime.ApplicationStopping.Register(trayIcon.Dispose);
+}
+
 await app.RunAsync();
 
 return 0;
+
+/// <summary>
+/// The few Win32 calls tray mode needs directly, kept out of H.NotifyIcon because they
+/// are about this exe's own window and resources, not the tray icon itself.
+/// </summary>
+internal static class NativeMethods
+{
+    /// <summary>
+    /// Detaches the process from its console, closing the window if this process was its
+    /// only owner. Needed because this exe's OutputType is Exe, shared with console and
+    /// service modes, so nothing else hides the console Windows allocates at startup.
+    /// </summary>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern bool FreeConsole();
+
+    /// <summary>
+    /// Pulls the first icon out of an executable's own resources, which is how a running
+    /// exe can reuse its own &lt;ApplicationIcon&gt; for the tray without shipping a
+    /// second copy of the .ico file.
+    /// </summary>
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    internal static extern nint ExtractIcon(nint hInst, string lpszExeFileName, int nIconIndex);
+}
