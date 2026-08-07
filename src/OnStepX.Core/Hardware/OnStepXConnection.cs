@@ -341,6 +341,17 @@ public sealed class OnStepXConnection : IAsyncDisposable
 
                     _logger.LogInformation("Autodiscovery: {Found}", found.Controller);
 
+                    // Remembered so the next connect opens this port at this
+                    // speed directly instead of sweeping again. A sweep runs
+                    // into tens of seconds, which is longer than some clients
+                    // wait before abandoning the connection, and every retry
+                    // they make then pays for a fresh sweep. Held in memory
+                    // only: writing it to the configuration is the job of
+                    // "Use this one" on the setup page, where it is the user's
+                    // decision rather than a silent edit of their settings.
+                    connection.PortName = found.Controller.PortName;
+                    connection.BaudRate = found.Controller.BaudRate;
+
                     // Deliberately the port autodiscovery already has open. Closing
                     // it and reopening pulses DTR and RTS, which resets the boards
                     // that wire those lines to EN and GPIO0, and the identity read
