@@ -73,6 +73,62 @@ internal sealed class SilentTransport(string description) : ITransport
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
 
+/// <summary>
+/// Serial-like transport that can be retuned while open and only answers at
+/// one speed, the way a real controller does.
+/// </summary>
+internal sealed class RetunableTransport(string description, int answersAt) : ITransport
+{
+    private readonly FakeOnStepDevice _device = new();
+
+    private int _baudRate;
+
+    /// <summary>Opens, which on real hardware is one board reset each.</summary>
+    public int OpenCount { get; private set; }
+
+    public string Description => description;
+
+    public bool IsOpen { get; private set; }
+
+    public async ValueTask OpenAsync(CancellationToken cancellationToken = default)
+    {
+        OpenCount++;
+        IsOpen = true;
+        await _device.OpenAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public ValueTask CloseAsync()
+    {
+        IsOpen = false;
+        return _device.CloseAsync();
+    }
+
+    public bool TrySetBaudRate(int baudRate)
+    {
+        _baudRate = baudRate;
+        return true;
+    }
+
+    public ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct = default) =>
+        _baudRate == answersAt ? _device.WriteAsync(data, ct) : ValueTask.CompletedTask;
+
+    public async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+    {
+        if (_baudRate != answersAt)
+        {
+            // Silence at the wrong speed, until the probe deadline cuts it off.
+            await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+            return 0;
+        }
+
+        return await _device.ReadAsync(buffer, ct).ConfigureAwait(false);
+    }
+
+    public void DiscardInputBuffer() => _device.DiscardInputBuffer();
+
+    public ValueTask DisposeAsync() => _device.DisposeAsync();
+}
+
 /// <summary>Transport that returns garbage, like the wrong baud rate.</summary>
 internal sealed class GarbageTransport(string description, string garbage) : ITransport
 {
@@ -140,6 +196,53 @@ public class PortDiscoveryTests
 
     private static SerialPortInfo Port(string name, string? friendly = null, int? vid = null) =>
         new() { PortName = name, FriendlyName = friendly, VendorId = vid };
+
+    [Fact]
+    public async Task TheSpeedSweepRetunesOnePortInsteadOfReopeningItPerSpeed()
+    {
+        // The regression this exists for: the sweep used to reopen the port for
+        // every speed in the list. Each reopen pulses DTR and RTS, which resets
+        // the boards wiring those to EN and GPIO0, so the controller was thrown
+        // back into booting before it could answer and the sweep concluded
+        // there was nothing there, at any speed, while the board audibly
+        // restarted throughout.
+        var enumerator = new FakeEnumerator(Port("COM7"));
+
+        // Every transport built is kept, not just the last: counting only the
+        // last one would pass just as well against the reopening behaviour
+        // this test exists to rule out.
+        var created = new List<RetunableTransport>();
+
+        var discovery = new PortDiscovery(
+            enumerator,
+            (port, baud) =>
+            {
+                var transport = new RetunableTransport(port, answersAt: 115200);
+                created.Add(transport);
+
+                return transport;
+            });
+
+        var options = new PortDiscoveryOptions
+        {
+            // Deliberately the wrong preferred speed, so the sweep has to walk
+            // past two before reaching the one the controller uses.
+            PreferredBaudRate = 9600,
+            BaudRates = [9600, 19200, 115200],
+            ProbeTimeout = TimeSpan.FromMilliseconds(100),
+            MaxConcurrency = 1,
+        };
+
+        IReadOnlyList<DiscoveredController> found = await discovery.DiscoverAsync(options);
+
+        DiscoveredController controller = Assert.Single(found);
+        Assert.Equal(115200, controller.BaudRate);
+
+        // Three speeds tried, one port built and opened once: one board reset
+        // for the whole sweep instead of one per speed.
+        RetunableTransport only = Assert.Single(created);
+        Assert.Equal(1, only.OpenCount);
+    }
 
     [Fact]
     public async Task ConnectingOpensTheConfiguredPortOnceAndHandsItBackOpen()

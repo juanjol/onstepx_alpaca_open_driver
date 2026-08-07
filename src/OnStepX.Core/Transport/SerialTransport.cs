@@ -17,7 +17,9 @@ public sealed class SerialTransport : ITransport
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(2);
 
     private readonly string _portName;
-    private readonly int _baudRate;
+    // Not readonly: the autodiscovery sweep retunes an open port rather than
+    // reopening it once per speed, because reopening resets the board.
+    private int _baudRate;
 
     /// <summary>
     /// Intermediate buffer because <see cref="SerialPort.Read(byte[], int, int)"/>
@@ -191,6 +193,43 @@ public sealed class SerialTransport : ITransport
         {
             // If the port was just lost, discarding makes no sense and
             // must not break the recovery flow either.
+        }
+    }
+
+    /// <inheritdoc />
+    public bool TrySetBaudRate(int baudRate)
+    {
+        SerialPort? port = _port;
+
+        if (port is null || !port.IsOpen)
+        {
+            // Not open yet: remember it, so opening uses the new speed.
+            _baudRate = baudRate;
+            return true;
+        }
+
+        if (_baudRate == baudRate)
+        {
+            return true;
+        }
+
+        try
+        {
+            port.BaudRate = baudRate;
+            _baudRate = baudRate;
+
+            // Whatever the previous speed produced is meaningless noise now.
+            port.DiscardInBuffer();
+            port.DiscardOutBuffer();
+
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException
+            or ArgumentOutOfRangeException or UnauthorizedAccessException)
+        {
+            // A driver that refuses the change just means the caller falls
+            // back to reopening, which still works, only with a reset.
+            return false;
         }
     }
 

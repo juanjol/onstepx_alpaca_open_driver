@@ -416,75 +416,212 @@ public sealed class PortDiscovery
         int totalPorts,
         CancellationToken cancellationToken)
     {
-        foreach (int baud in baudRates)
+        ITransport probe = _transportFactory(port.PortName, baudRates[0]);
+
+        // Retuning an open port beats reopening it once per speed. Each reopen
+        // pulses DTR and RTS, and on the boards wiring those to EN and GPIO0
+        // that is a reset, so the controller is still booting when the next
+        // speed is tried: it answers at none of them and restarts audibly
+        // throughout, which reads as "no controller here" at every speed.
+        if (!probe.TrySetBaudRate(baudRates[0]))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            progress?.Report(new PortDiscoveryProgress
-            {
-                PortsProcessed = 0,
-                PortsTotal = totalPorts,
-                CurrentPort = port.PortName,
-                CurrentBaudRate = baud,
-            });
-
-            ProbeOutcome? result = await ProbeOneAsync(port, baud, options, cancellationToken)
+            // Handed straight on rather than thrown away: it was built for the
+            // first speed in the list, which is the first thing that path tries.
+            return await ProbeByReopeningAsync(
+                port, baudRates, options, progress, totalPorts, cancellationToken, probe)
                 .ConfigureAwait(false);
-
-            if (result is not null)
-            {
-                return result;
-            }
         }
 
-        return null;
+        return await SweepOpenPortAsync(
+            probe, port, baudRates, options, progress, totalPorts, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Tries every speed over one open port, which is one board reset.</summary>
+    private async Task<ProbeOutcome?> SweepOpenPortAsync(
+        ITransport transport,
+        SerialPortInfo port,
+        int[] baudRates,
+        PortDiscoveryOptions options,
+        IProgress<PortDiscoveryProgress>? progress,
+        int totalPorts,
+        CancellationToken cancellationToken)
+    {
+        ITransport? unowned = transport;
+        OnStepChannel? channel = null;
+
+        try
+        {
+            using (var openTimeout =
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                // Opening can hang on a problematic port, so it gets a deadline
+                // of its own rather than eating into the conversation's.
+                openTimeout.CancelAfter(options.ProbeTimeout * 2);
+
+                await transport.OpenAsync(openTimeout.Token).ConfigureAwait(false);
+            }
+
+            channel = new OnStepChannel(transport, ProbeChannelOptions(options));
+
+            // The transport becomes owned by the channel.
+            unowned = null;
+
+            foreach (int baud in baudRates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                progress?.Report(new PortDiscoveryProgress
+                {
+                    PortsProcessed = 0,
+                    PortsTotal = totalPorts,
+                    CurrentPort = port.PortName,
+                    CurrentBaudRate = baud,
+                });
+
+                if (!channel.Transport.TrySetBaudRate(baud))
+                {
+                    // Retuning stopped working part way through, so the rest
+                    // of the list is better left to the reopening path than
+                    // silently skipped.
+                    break;
+                }
+
+                // Whatever the previous speed produced is noise at this one.
+                channel.DiscardPending();
+
+                DiscoveredController? found = await TryIdentifyAsync(
+                    channel, port, baud, options, cancellationToken).ConfigureAwait(false);
+
+                if (found is not null)
+                {
+                    return new ProbeOutcome(
+                        found,
+                        options.KeepTransportOpen ? channel.DetachTransport() : null);
+                }
+            }
+
+            return null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Sweeping {Port} yielded nothing", port.PortName);
+            return null;
+        }
+        finally
+        {
+            if (channel is not null)
+            {
+                await channel.DisposeAsync().ConfigureAwait(false);
+            }
+            else if (unowned is not null)
+            {
+                await unowned.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>Tries every speed by reopening the port for each one.</summary>
+    /// <remarks>
+    /// The fallback for transports with no notion of speed, which is the
+    /// simulator and the scripted ones in the tests. Real serial ports take
+    /// the single open path, because for them each reopen costs a board reset.
+    /// </remarks>
+    private async Task<ProbeOutcome?> ProbeByReopeningAsync(
+        SerialPortInfo port,
+        int[] baudRates,
+        PortDiscoveryOptions options,
+        IProgress<PortDiscoveryProgress>? progress,
+        int totalPorts,
+        CancellationToken cancellationToken,
+        ITransport? alreadyBuilt = null)
+    {
+        ITransport? pending = alreadyBuilt;
+
+        try
+        {
+            foreach (int baud in baudRates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                progress?.Report(new PortDiscoveryProgress
+                {
+                    PortsProcessed = 0,
+                    PortsTotal = totalPorts,
+                    CurrentPort = port.PortName,
+                    CurrentBaudRate = baud,
+                });
+
+                // Only the first pass can inherit one, and once handed over
+                // it belongs to the probe.
+                ITransport? inherited = pending;
+                pending = null;
+
+                ProbeOutcome? result = await ProbeOneAsync(
+                    port, baud, options, cancellationToken, inherited).ConfigureAwait(false);
+
+                if (result is not null)
+                {
+                    return result;
+                }
+            }
+
+            return null;
+        }
+        finally
+        {
+            // Only reachable if the loop never ran or threw before using it.
+            if (pending is not null)
+            {
+                await pending.DisposeAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>A match, plus its port if the caller asked to keep it open.</summary>
     private sealed record ProbeOutcome(DiscoveredController Controller, ITransport? Transport);
 
-    private async Task<ProbeOutcome?> ProbeOneAsync(
+    /// <summary>Channel settings shared by every probe.</summary>
+    private static OnStepChannelOptions ProbeChannelOptions(PortDiscoveryOptions options) => new()
+    {
+        UseErrorCorrection = options.UseErrorCorrection,
+        Timeout = options.ProbeTimeout,
+
+        // One retry, not zero: on boards that reset on DTR/RTS assertion
+        // (common on ESP32/CH340), opening the port can still be mid boot
+        // when the first command is written, so it is silently dropped. A
+        // single retry is enough to land a second write after boot without
+        // meaningfully slowing down the case where the port truly is not a
+        // match.
+        MaxRetries = 1,
+    };
+
+    /// <summary>
+    /// Asks an open channel who it is, at whatever speed it is set to.
+    /// </summary>
+    private async Task<DiscoveredController?> TryIdentifyAsync(
+        OnStepChannel channel,
         SerialPortInfo port,
         int baudRate,
         PortDiscoveryOptions options,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        ITransport? transport = null;
-        OnStepChannel? channel = null;
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        // Room for one retry per command: two full timeouts for GVP and two
+        // for GVN.
+        timeout.CancelAfter(options.ProbeTimeout * 4);
 
         try
         {
-            transport = _transportFactory(port.PortName, baudRate);
-
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-
-            // Opening can also hang on a problematic port, so the deadline
-            // covers the opening, not just the conversation. Widened to fit
-            // one retry per command (see MaxRetries below): worst case is
-            // open plus two full timeouts for GVP plus two for GVN.
-            timeout.CancelAfter(options.ProbeTimeout + (options.ProbeTimeout * 4));
-
-            await transport.OpenAsync(timeout.Token).ConfigureAwait(false);
-
-            channel = new OnStepChannel(transport, new OnStepChannelOptions
-            {
-                UseErrorCorrection = options.UseErrorCorrection,
-                Timeout = options.ProbeTimeout,
-
-                // One retry, not zero: on boards that reset on DTR/RTS
-                // assertion (common on ESP32/CH340), opening the port can
-                // still be mid boot when the first command is written, so
-                // it is silently dropped. A single retry is enough to land
-                // a second write after boot without meaningfully slowing
-                // down the case where the port truly is not a match.
-                MaxRetries = 1,
-            });
-
-            // The transport becomes owned by the channel.
-            transport = null;
-
-            string product = await channel.GetStringAsync("GVP", timeout.Token).ConfigureAwait(false);
+            string product = await channel.GetStringAsync("GVP", timeout.Token)
+                .ConfigureAwait(false);
 
             if (!LooksLikeOnStep(product))
             {
@@ -496,7 +633,8 @@ public sealed class PortDiscovery
 
             // Confirmation with a second command. This is what rules out
             // false positives from garbage at the wrong baud rate.
-            string version = await channel.GetStringAsync("GVN", timeout.Token).ConfigureAwait(false);
+            string version = await channel.GetStringAsync("GVN", timeout.Token)
+                .ConfigureAwait(false);
 
             if (!LooksLikeVersion(version))
             {
@@ -512,7 +650,7 @@ public sealed class PortDiscovery
                 "Found {Product} {Version} on {Port} at {Baud} baud",
                 product, version, port.PortName, baudRate);
 
-            var controller = new DiscoveredController
+            return new DiscoveredController
             {
                 PortName = port.PortName,
                 BaudRate = baudRate,
@@ -521,12 +659,60 @@ public sealed class PortDiscovery
                 FriendlyName = port.FriendlyName,
                 ProbeDuration = stopwatch.Elapsed,
             };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(
+                ex, "Probing {Port} at {Baud} yielded nothing", port.PortName, baudRate);
+            return null;
+        }
+    }
+
+    private async Task<ProbeOutcome?> ProbeOneAsync(
+        SerialPortInfo port,
+        int baudRate,
+        PortDiscoveryOptions options,
+        CancellationToken cancellationToken,
+        ITransport? alreadyBuilt = null)
+    {
+        ITransport? transport = null;
+        OnStepChannel? channel = null;
+
+        try
+        {
+            transport = alreadyBuilt ?? _transportFactory(port.PortName, baudRate);
+
+            using (var openTimeout =
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                // Opening can also hang on a problematic port.
+                openTimeout.CancelAfter(options.ProbeTimeout * 2);
+
+                await transport.OpenAsync(openTimeout.Token).ConfigureAwait(false);
+            }
+
+            channel = new OnStepChannel(transport, ProbeChannelOptions(options));
+
+            // The transport becomes owned by the channel.
+            transport = null;
+
+            DiscoveredController? found = await TryIdentifyAsync(
+                channel, port, baudRate, options, cancellationToken).ConfigureAwait(false);
+
+            if (found is null)
+            {
+                return null;
+            }
 
             // Handing the live port over is what stops the controller being
             // reset a second time: the caller carries on over this same open
             // port instead of closing it and pulsing DTR and RTS again.
             return new ProbeOutcome(
-                controller,
+                found,
                 options.KeepTransportOpen ? channel.DetachTransport() : null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

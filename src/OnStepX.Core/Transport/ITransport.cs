@@ -46,4 +46,22 @@ public interface ITransport : IAsyncDisposable
     /// command permanently desynchronizes the channel.
     /// </remarks>
     void DiscardInputBuffer();
+
+    /// <summary>
+    /// Changes the speed of an already open channel, if that means anything here.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c> if the speed was changed, <c>false</c> if this transport has
+    /// no such concept, which is the default.
+    /// </returns>
+    /// <remarks>
+    /// Autodiscovery sweeps a dozen speeds looking for the controller. Doing
+    /// that by reopening the port once per speed pulses DTR and RTS every
+    /// time, and on the boards wiring those lines to EN and GPIO0 that is a
+    /// reset: the controller is thrown back into booting before it ever gets
+    /// to answer, so the sweep reports nothing at any speed while the board
+    /// audibly restarts over and over. Changing the speed in place keeps the
+    /// whole sweep down to the single open the port needed anyway.
+    /// </remarks>
+    bool TrySetBaudRate(int baudRate) => false;
 }

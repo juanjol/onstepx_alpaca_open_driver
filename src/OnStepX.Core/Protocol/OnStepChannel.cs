@@ -589,6 +589,16 @@ public sealed class OnStepChannel : IAsyncDisposable
         _transport.DiscardInputBuffer();
     }
 
+    /// <summary>
+    /// Throws away anything buffered, received or pending.
+    /// </summary>
+    /// <remarks>
+    /// For autodiscovery, which retunes one open port through a list of speeds.
+    /// Whatever the previous speed produced is noise at the next one, and
+    /// reading it as a response would desynchronize the channel.
+    /// </remarks>
+    public void DiscardPending() => DiscardInput();
+
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
