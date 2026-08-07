@@ -463,7 +463,7 @@ public sealed class PortDiscovery
             }
 
             channel = new OnStepChannel(
-                transport, ProbeChannelOptions(options, mayStillBeBooting: true));
+                transport, ProbeChannelOptions(options));
 
             // The transport becomes owned by the channel.
             unowned = null;
@@ -500,12 +500,6 @@ public sealed class PortDiscovery
                         found,
                         options.KeepTransportOpen ? channel.DetachTransport() : null);
                 }
-
-                // That first attempt already waited out the boot the open
-                // caused, so the rest of the speeds do not have to pay for it
-                // again. This is what stops a full sweep taking twice as long
-                // as it needs to.
-                channel.Options = ProbeChannelOptions(options, mayStillBeBooting: false);
             }
 
             return null;
@@ -592,29 +586,30 @@ public sealed class PortDiscovery
     /// <summary>A match, plus its port if the caller asked to keep it open.</summary>
     private sealed record ProbeOutcome(DiscoveredController Controller, ITransport? Transport);
 
-    /// <summary>Channel settings for a probe.</summary>
-    /// <param name="options">Discovery settings the timeout comes from.</param>
-    /// <param name="mayStillBeBooting">
-    /// Whether the port was just opened, so the controller may not be up yet.
-    /// </param>
+    /// <summary>Channel settings shared by every probe.</summary>
     /// <remarks>
-    /// The retry exists only to cover a board booting: on boards that reset on
-    /// DTR/RTS assertion (common on ESP32/CH340) the port can still be mid boot
-    /// when the first command is written, so it is silently dropped and a
-    /// second write is what lands.
     /// <para>
-    /// Which makes it worth paying exactly once. A sweep over one open port
-    /// boots the board at the open and not again, so retrying every subsequent
-    /// speed only doubles the time spent proving each wrong one wrong.
+    /// The retry covers a board still booting: on boards that reset on DTR/RTS
+    /// assertion (common on ESP32/CH340) the port can be mid boot when the
+    /// first command is written, so it is silently dropped and the second write
+    /// is what lands.
+    /// </para>
+    /// <para>
+    /// It is kept for every speed in a sweep, not just the first, even though a
+    /// sweep over one open port ought to boot the board only at the open. On at
+    /// least one CH340 setup a retuning sweep finds nothing at a speed the
+    /// board demonstrably answers on when the port is opened there directly,
+    /// and until that is understood it cannot be ruled out that changing the
+    /// speed resets the board too. Dropping the retry would then leave the
+    /// correct speed with a single attempt against a booting board, trading
+    /// away the case that matters for a sweep that finishes sooner.
     /// </para>
     /// </remarks>
-    private static OnStepChannelOptions ProbeChannelOptions(
-        PortDiscoveryOptions options,
-        bool mayStillBeBooting) => new()
+    private static OnStepChannelOptions ProbeChannelOptions(PortDiscoveryOptions options) => new()
     {
         UseErrorCorrection = options.UseErrorCorrection,
         Timeout = options.ProbeTimeout,
-        MaxRetries = mayStillBeBooting ? 1 : 0,
+        MaxRetries = 1,
     };
 
     /// <summary>
@@ -713,7 +708,7 @@ public sealed class PortDiscovery
             }
 
             channel = new OnStepChannel(
-                transport, ProbeChannelOptions(options, mayStillBeBooting: true));
+                transport, ProbeChannelOptions(options));
 
             // The transport becomes owned by the channel.
             transport = null;

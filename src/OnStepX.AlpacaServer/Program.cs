@@ -187,6 +187,17 @@ app.MapGet("/settings/export", () =>
         "onstepx-settings.json");
 });
 
+// Alpaca's standard per device setup URL, which is what a client's "configure"
+// button opens: /setup/v1/<devicetype>/<n>/setup. Without these it is a 404 and
+// the client looks broken, which is exactly what NINA showed. Mapped explicitly
+// rather than left to the Blazor fallback, because something in the routing
+// table already claims /setup and answers 404 instead of falling through.
+app.MapGet("/setup/v1/{deviceType}/{deviceNumber:int}/setup", (string deviceType) =>
+    Results.Redirect(SetupPages.For(deviceType), permanent: false));
+
+// The server's own setup page, the other half of the same convention.
+app.MapGet("/setup", () => Results.Redirect("/", permanent: false));
+
 // Log download, so a problem can be sent on as a file rather than selected by
 // hand out of a scrolling page.
 app.MapGet("/logs/download", () => Results.File(
@@ -247,6 +258,28 @@ if (isWindowsTray)
 await app.RunAsync();
 
 return 0;
+
+/// <summary>
+/// Maps an Alpaca device type onto the setup page that configures it.
+/// </summary>
+/// <remarks>
+/// The names are Alpaca's own, from the URL a client opens, so they are matched
+/// as they arrive rather than translated through the driver's device keys.
+/// </remarks>
+internal static class SetupPages
+{
+    /// <summary>The page for a device type, or the dashboard if unrecognised.</summary>
+    public static string For(string deviceType) =>
+        deviceType.ToLowerInvariant() switch
+        {
+            "telescope" => "/mount",
+            "focuser" => "/focuser",
+            "rotator" => "/rotator",
+            "observingconditions" => "/weather",
+            "switch" => "/features",
+            _ => "/",
+        };
+}
 
 /// <summary>
 /// The few Win32 calls tray mode needs directly, kept out of H.NotifyIcon because they

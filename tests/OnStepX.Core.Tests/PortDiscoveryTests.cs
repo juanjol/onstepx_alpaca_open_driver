@@ -252,12 +252,15 @@ public class PortDiscoveryTests
     }
 
     [Fact]
-    public async Task OnlyTheFirstSpeedPaysForTheBoardBooting()
+    public async Task EverySpeedKeepsTheBootAllowance()
     {
-        // The retry exists to cover a board still booting after the open reset
-        // it. A sweep over one open port boots it once, so retrying at every
-        // later speed only doubles the time spent proving each wrong one wrong,
-        // which is what made discovery feel slow.
+        // Dropping the retry after the first speed halves a sweep, and was
+        // tried. It is deliberately not done: on at least one CH340 setup a
+        // retuning sweep finds nothing at a speed the board demonstrably
+        // answers on when opened there directly, so it cannot yet be ruled out
+        // that changing the speed also resets the board. If it does, the speed
+        // that matters would get one attempt against a booting controller.
+        // Reinstate this only once retuning is known not to reset.
         var enumerator = new FakeEnumerator(Port("COM7"));
 
         var created = new List<RetunableTransport>();
@@ -286,11 +289,11 @@ public class PortDiscoveryTests
 
         RetunableTransport only = Assert.Single(created);
 
-        // Two tries at the first speed, one of them the boot allowance. One try
-        // each at the speeds after it, because the board is known up by then.
+        // Two tries at every speed that did not answer, so a board still
+        // booting gets a second chance whichever speed it is found on.
         Assert.Equal(2, only.WriteBauds.Count(b => b == 9600));
-        Assert.Equal(1, only.WriteBauds.Count(b => b == 19200));
-        Assert.Equal(1, only.WriteBauds.Count(b => b == 38400));
+        Assert.Equal(2, only.WriteBauds.Count(b => b == 19200));
+        Assert.Equal(2, only.WriteBauds.Count(b => b == 38400));
     }
 
     [Fact]
