@@ -462,7 +462,8 @@ public sealed class PortDiscovery
                 await transport.OpenAsync(openTimeout.Token).ConfigureAwait(false);
             }
 
-            channel = new OnStepChannel(transport, ProbeChannelOptions(options));
+            channel = new OnStepChannel(
+                transport, ProbeChannelOptions(options, mayStillBeBooting: true));
 
             // The transport becomes owned by the channel.
             unowned = null;
@@ -499,6 +500,12 @@ public sealed class PortDiscovery
                         found,
                         options.KeepTransportOpen ? channel.DetachTransport() : null);
                 }
+
+                // That first attempt already waited out the boot the open
+                // caused, so the rest of the speeds do not have to pay for it
+                // again. This is what stops a full sweep taking twice as long
+                // as it needs to.
+                channel.Options = ProbeChannelOptions(options, mayStillBeBooting: false);
             }
 
             return null;
@@ -585,19 +592,29 @@ public sealed class PortDiscovery
     /// <summary>A match, plus its port if the caller asked to keep it open.</summary>
     private sealed record ProbeOutcome(DiscoveredController Controller, ITransport? Transport);
 
-    /// <summary>Channel settings shared by every probe.</summary>
-    private static OnStepChannelOptions ProbeChannelOptions(PortDiscoveryOptions options) => new()
+    /// <summary>Channel settings for a probe.</summary>
+    /// <param name="options">Discovery settings the timeout comes from.</param>
+    /// <param name="mayStillBeBooting">
+    /// Whether the port was just opened, so the controller may not be up yet.
+    /// </param>
+    /// <remarks>
+    /// The retry exists only to cover a board booting: on boards that reset on
+    /// DTR/RTS assertion (common on ESP32/CH340) the port can still be mid boot
+    /// when the first command is written, so it is silently dropped and a
+    /// second write is what lands.
+    /// <para>
+    /// Which makes it worth paying exactly once. A sweep over one open port
+    /// boots the board at the open and not again, so retrying every subsequent
+    /// speed only doubles the time spent proving each wrong one wrong.
+    /// </para>
+    /// </remarks>
+    private static OnStepChannelOptions ProbeChannelOptions(
+        PortDiscoveryOptions options,
+        bool mayStillBeBooting) => new()
     {
         UseErrorCorrection = options.UseErrorCorrection,
         Timeout = options.ProbeTimeout,
-
-        // One retry, not zero: on boards that reset on DTR/RTS assertion
-        // (common on ESP32/CH340), opening the port can still be mid boot
-        // when the first command is written, so it is silently dropped. A
-        // single retry is enough to land a second write after boot without
-        // meaningfully slowing down the case where the port truly is not a
-        // match.
-        MaxRetries = 1,
+        MaxRetries = mayStillBeBooting ? 1 : 0,
     };
 
     /// <summary>
@@ -695,7 +712,8 @@ public sealed class PortDiscovery
                 await transport.OpenAsync(openTimeout.Token).ConfigureAwait(false);
             }
 
-            channel = new OnStepChannel(transport, ProbeChannelOptions(options));
+            channel = new OnStepChannel(
+                transport, ProbeChannelOptions(options, mayStillBeBooting: true));
 
             // The transport becomes owned by the channel.
             transport = null;

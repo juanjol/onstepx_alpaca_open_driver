@@ -109,8 +109,15 @@ internal sealed class RetunableTransport(string description, int answersAt) : IT
         return true;
     }
 
-    public ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct = default) =>
-        _baudRate == answersAt ? _device.WriteAsync(data, ct) : ValueTask.CompletedTask;
+    /// <summary>Speed each write went out at, so retries per speed are visible.</summary>
+    public List<int> WriteBauds { get; } = [];
+
+    public ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct = default)
+    {
+        WriteBauds.Add(_baudRate);
+
+        return _baudRate == answersAt ? _device.WriteAsync(data, ct) : ValueTask.CompletedTask;
+    }
 
     public async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
     {
@@ -242,6 +249,48 @@ public class PortDiscoveryTests
         // for the whole sweep instead of one per speed.
         RetunableTransport only = Assert.Single(created);
         Assert.Equal(1, only.OpenCount);
+    }
+
+    [Fact]
+    public async Task OnlyTheFirstSpeedPaysForTheBoardBooting()
+    {
+        // The retry exists to cover a board still booting after the open reset
+        // it. A sweep over one open port boots it once, so retrying at every
+        // later speed only doubles the time spent proving each wrong one wrong,
+        // which is what made discovery feel slow.
+        var enumerator = new FakeEnumerator(Port("COM7"));
+
+        var created = new List<RetunableTransport>();
+
+        var discovery = new PortDiscovery(
+            enumerator,
+            (port, baud) =>
+            {
+                var transport = new RetunableTransport(port, answersAt: 115200);
+                created.Add(transport);
+
+                return transport;
+            });
+
+        var options = new PortDiscoveryOptions
+        {
+            PreferredBaudRate = 9600,
+            BaudRates = [9600, 19200, 38400, 115200],
+            ProbeTimeout = TimeSpan.FromMilliseconds(100),
+            MaxConcurrency = 1,
+        };
+
+        IReadOnlyList<DiscoveredController> found = await discovery.DiscoverAsync(options);
+
+        Assert.Single(found);
+
+        RetunableTransport only = Assert.Single(created);
+
+        // Two tries at the first speed, one of them the boot allowance. One try
+        // each at the speeds after it, because the board is known up by then.
+        Assert.Equal(2, only.WriteBauds.Count(b => b == 9600));
+        Assert.Equal(1, only.WriteBauds.Count(b => b == 19200));
+        Assert.Equal(1, only.WriteBauds.Count(b => b == 38400));
     }
 
     [Fact]
