@@ -469,7 +469,7 @@ public sealed class PortDiscovery
             }
 
             channel = new OnStepChannel(
-                transport, ProbeChannelOptions(options));
+                transport, ProbeChannelOptions(options, mayStillBeBooting: true));
 
             // The transport becomes owned by the channel.
             unowned = null;
@@ -506,6 +506,11 @@ public sealed class PortDiscovery
                         found,
                         options.KeepTransportOpen ? channel.DetachTransport() : null);
                 }
+
+                // The boot the open caused has been waited out by that first
+                // attempt, and retuning does not cause another, so the speeds
+                // after it do not have to pay for one.
+                channel.Options = ProbeChannelOptions(options, mayStillBeBooting: false);
             }
 
             return null;
@@ -592,7 +597,11 @@ public sealed class PortDiscovery
     /// <summary>A match, plus its port if the caller asked to keep it open.</summary>
     private sealed record ProbeOutcome(DiscoveredController Controller, ITransport? Transport);
 
-    /// <summary>Channel settings shared by every probe.</summary>
+    /// <summary>Channel settings for a probe.</summary>
+    /// <param name="options">Discovery settings the timeout comes from.</param>
+    /// <param name="mayStillBeBooting">
+    /// Whether the port was just opened, so the controller may not be up yet.
+    /// </param>
     /// <remarks>
     /// <para>
     /// The retry covers a board still booting: on boards that reset on DTR/RTS
@@ -601,21 +610,20 @@ public sealed class PortDiscovery
     /// is what lands.
     /// </para>
     /// <para>
-    /// It is kept for every speed in a sweep, not just the first, even though a
-    /// sweep over one open port ought to boot the board only at the open. On at
-    /// least one CH340 setup a retuning sweep finds nothing at a speed the
-    /// board demonstrably answers on when the port is opened there directly,
-    /// and until that is understood it cannot be ruled out that changing the
-    /// speed resets the board too. Dropping the retry would then leave the
-    /// correct speed with a single attempt against a booting board, trading
-    /// away the case that matters for a sweep that finishes sooner.
+    /// Which is worth paying exactly once. A sweep runs over one open port, and
+    /// retuning an open port has been confirmed on CH340 hardware not to reset
+    /// the board, so the boot happens at the open and nowhere else. Retrying at
+    /// every later speed would only double the time spent proving each wrong
+    /// one wrong, and that time is what a client's connect timeout runs out of.
     /// </para>
     /// </remarks>
-    private static OnStepChannelOptions ProbeChannelOptions(PortDiscoveryOptions options) => new()
+    private static OnStepChannelOptions ProbeChannelOptions(
+        PortDiscoveryOptions options,
+        bool mayStillBeBooting) => new()
     {
         UseErrorCorrection = options.UseErrorCorrection,
         Timeout = options.ProbeTimeout,
-        MaxRetries = 1,
+        MaxRetries = mayStillBeBooting ? 1 : 0,
     };
 
     /// <summary>
@@ -714,7 +722,7 @@ public sealed class PortDiscovery
             }
 
             channel = new OnStepChannel(
-                transport, ProbeChannelOptions(options));
+                transport, ProbeChannelOptions(options, mayStillBeBooting: true));
 
             // The transport becomes owned by the channel.
             transport = null;

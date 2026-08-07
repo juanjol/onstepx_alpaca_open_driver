@@ -252,15 +252,14 @@ public class PortDiscoveryTests
     }
 
     [Fact]
-    public async Task EverySpeedKeepsTheBootAllowance()
+    public async Task OnlyTheFirstSpeedPaysForTheBoardBooting()
     {
-        // Dropping the retry after the first speed halves a sweep, and was
-        // tried. It is deliberately not done: on at least one CH340 setup a
-        // retuning sweep finds nothing at a speed the board demonstrably
-        // answers on when opened there directly, so it cannot yet be ruled out
-        // that changing the speed also resets the board. If it does, the speed
-        // that matters would get one attempt against a booting controller.
-        // Reinstate this only once retuning is known not to reset.
+        // The retry covers a board still booting after the open reset it. A
+        // sweep runs over one open port, and retuning has been confirmed on
+        // CH340 hardware not to reset the board, so the boot happens at the
+        // open and nowhere else. Retrying at every later speed would double
+        // the time spent ruling each wrong one out, and that time is what a
+        // client's connect timeout runs out of.
         var enumerator = new FakeEnumerator(Port("COM7"));
 
         var created = new List<RetunableTransport>();
@@ -289,11 +288,11 @@ public class PortDiscoveryTests
 
         RetunableTransport only = Assert.Single(created);
 
-        // Two tries at every speed that did not answer, so a board still
-        // booting gets a second chance whichever speed it is found on.
+        // Two tries at the first speed, one of them the boot allowance. One
+        // try each at the speeds after it, because the board is up by then.
         Assert.Equal(2, only.WriteBauds.Count(b => b == 9600));
-        Assert.Equal(2, only.WriteBauds.Count(b => b == 19200));
-        Assert.Equal(2, only.WriteBauds.Count(b => b == 38400));
+        Assert.Equal(1, only.WriteBauds.Count(b => b == 19200));
+        Assert.Equal(1, only.WriteBauds.Count(b => b == 38400));
     }
 
     [Fact]
