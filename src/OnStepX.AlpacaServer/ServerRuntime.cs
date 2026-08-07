@@ -82,6 +82,11 @@ public static class ServerRuntime
                 () => Settings,
                 transportOverride,
                 loggerFactory.CreateLogger<OnStepXConnection>());
+
+            // Autodiscovery updates the port and speed in memory when it finds
+            // the controller. Writing them out here is what keeps the slow
+            // first connect to genuinely once, instead of once per restart.
+            _connection.PortRemembered += SaveSettings;
         }
     }
 

@@ -77,6 +77,16 @@ public sealed class OnStepXConnection : IAsyncDisposable
     private readonly HashSet<string> _connectedDevices = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger _logger;
     private readonly Func<OnStepXSettings> _settingsProvider;
+
+    /// <summary>
+    /// Raised when autodiscovery settled on a port and speed worth keeping.
+    /// </summary>
+    /// <remarks>
+    /// The settings have already been updated in memory when this fires. It
+    /// exists so the host can persist them, which this class cannot do itself
+    /// without taking a dependency on where the configuration is stored.
+    /// </remarks>
+    public event Action? PortRemembered;
     private readonly Func<ITransport>? _transportOverride;
 
     private OnStepChannel? _channel;
@@ -345,12 +355,21 @@ public sealed class OnStepXConnection : IAsyncDisposable
                     // speed directly instead of sweeping again. A sweep runs
                     // into tens of seconds, which is longer than some clients
                     // wait before abandoning the connection, and every retry
-                    // they make then pays for a fresh sweep. Held in memory
-                    // only: writing it to the configuration is the job of
-                    // "Use this one" on the setup page, where it is the user's
-                    // decision rather than a silent edit of their settings.
+                    // they make then pays for a fresh sweep, so a mount that is
+                    // genuinely there never gets connected.
+                    bool changed = connection.PortName != found.Controller.PortName
+                        || connection.BaudRate != found.Controller.BaudRate;
+
                     connection.PortName = found.Controller.PortName;
                     connection.BaudRate = found.Controller.BaudRate;
+
+                    if (changed)
+                    {
+                        // Worth persisting, not just holding in memory: the
+                        // whole point is that the slow first connect happens
+                        // once, and a restart would otherwise pay for it again.
+                        PortRemembered?.Invoke();
+                    }
 
                     // Deliberately the port autodiscovery already has open. Closing
                     // it and reopening pulses DTR and RTS, which resets the boards

@@ -18,8 +18,14 @@ public sealed record PortDiscoveryOptions
     /// Sweep baud rates, in order. Default is OnStepX's own, sorted from
     /// most to least likely.
     /// </summary>
+    /// <remarks>
+    /// 9600 first because that is what most profiles ship with, then 115200,
+    /// which is what the ESP32 builds normally run at. Those two cover almost
+    /// every real mount, and the order matters more than it looks: each speed
+    /// that has to be ruled out first costs seconds a client may not wait.
+    /// </remarks>
     public IReadOnlyList<int> BaudRates { get; init; } =
-        [9600, 19200, 115200, 57600, 38400, 230400, 460800];
+        [9600, 115200, 19200, 57600, 38400, 230400, 460800];
 
     /// <summary>
     /// Deadline for each attempt. Short on purpose: ports that are not a
