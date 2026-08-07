@@ -145,6 +145,14 @@ if (!args.Any(a => a.Contains("--urls", StringComparison.OrdinalIgnoreCase)))
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 
+// Works out where the controller is before a client asks, because a first
+// blind search takes longer than some clients wait for a connect. Pointless
+// against the simulator, which has no port to find.
+if (!ServerRuntime.IsSimulated)
+{
+    builder.Services.AddHostedService<PortWatcher>();
+}
+
 string xmlPath = Path.Combine(
     AppContext.BaseDirectory,
     $"{Assembly.GetExecutingAssembly().GetName().Name}.xml");

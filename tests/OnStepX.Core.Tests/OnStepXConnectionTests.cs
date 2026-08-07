@@ -63,6 +63,36 @@ public class OnStepXConnectionTests
     };
 
     [Fact]
+    public async Task WarmingUpLeavesAWorkingSessionAlone()
+    {
+        // The warm up exists to find the port before a client asks, but it
+        // finds it by opening ports. Doing that underneath a client that
+        // already holds one is how a working session gets broken.
+        var settings = SimulatedSettings();
+        settings.Connection.Kind = TransportKind.Serial;
+        settings.Connection.AutoDiscoverPort = true;
+        settings.Connection.PortName = "COM7";
+
+        var transport = new CountingTransport();
+
+        await using var connection = new OnStepXConnection(
+            () => settings,
+            () => transport,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<OnStepXConnection>.Instance);
+
+        await connection.ConnectAsync("Telescope");
+        Assert.True(connection.IsConnected);
+
+        await connection.WarmUpAsync();
+
+        // Still connected, over the same port, opened no further times.
+        Assert.True(connection.IsConnected);
+        Assert.Equal(1, transport.OpenCount);
+        Assert.Equal(0, transport.DisposeCount);
+        Assert.Equal("COM7", settings.Connection.PortName);
+    }
+
+    [Fact]
     public async Task ConnectingReadsTheControllerIdentity()
     {
         await using var connection = new OnStepXConnection(SimulatedSettings);

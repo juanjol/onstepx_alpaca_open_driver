@@ -310,6 +310,107 @@ public sealed class OnStepXConnection : IAsyncDisposable
         return new OnStepChannel(transport, channelOptions);
     }
 
+    /// <summary>
+    /// Works out where the controller is, ahead of anyone asking to connect.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A first, blind autodiscovery takes longer than some clients wait before
+    /// abandoning a connection: NINA gives up and retries every few seconds, so
+    /// the sweep never finishes before the next attempt restarts it. Doing that
+    /// work at startup instead means the port is already known by the time
+    /// anything connects, and the connect is a single open.
+    /// </para>
+    /// <para>
+    /// Runs under the same gate as connecting, which is the point. Discovery
+    /// opens serial ports, so a warm up racing a client's connect would leave
+    /// one of them meeting a port the other already holds.
+    /// </para>
+    /// </remarks>
+    public async Task WarmUpAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        ConnectionSettings connection = _settingsProvider().Connection;
+
+        if (connection.Kind != TransportKind.Serial || !connection.AutoDiscoverPort)
+        {
+            return;
+        }
+
+        // An injected transport is the simulator or a test. There is no port to
+        // go looking for, and scanning would reach for the real machine's.
+        if (_transportOverride is not null)
+        {
+            return;
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Somebody got there first. Their open port is the answer, and
+            // probing around it would only disturb a working session.
+            if (_channel is not null)
+            {
+                return;
+            }
+
+            DiscoveredConnection? found = await DiscoverAsync(connection, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (found is null)
+            {
+                _logger.LogDebug("Warm up found no controller");
+                return;
+            }
+
+            // Closed again rather than held: keeping a port open for a client
+            // that may never arrive locks out every other program on the
+            // machine. The point of this is the answer, not the port.
+            await using (found.ConfigureAwait(false))
+            {
+                Remember(connection, found.Controller);
+
+                _logger.LogInformation(
+                    "Warm up found {Found}, ready for the first connect", found.Controller);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Best effort by definition. A warm up that fails costs nothing
+            // beyond the slow first connect it was trying to avoid.
+            _logger.LogDebug(ex, "Warm up did not complete");
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Keeps the port and speed that answered, so the next connect goes
+    /// straight there.
+    /// </summary>
+    /// <remarks>
+    /// A sweep runs into tens of seconds, which is longer than some clients
+    /// wait, and every retry they make would otherwise pay for a fresh one, so
+    /// a mount that is genuinely there never gets connected. Persisted rather
+    /// than merely held, or a restart would pay for it all over again.
+    /// </remarks>
+    private void Remember(ConnectionSettings connection, DiscoveredController controller)
+    {
+        bool changed = connection.PortName != controller.PortName
+            || connection.BaudRate != controller.BaudRate;
+
+        connection.PortName = controller.PortName;
+        connection.BaudRate = controller.BaudRate;
+
+        if (changed)
+        {
+            PortRemembered?.Invoke();
+        }
+    }
+
     private async Task<ITransport> CreateTransportAsync(
         ConnectionSettings connection,
         CancellationToken cancellationToken)
@@ -351,25 +452,7 @@ public sealed class OnStepXConnection : IAsyncDisposable
 
                     _logger.LogInformation("Autodiscovery: {Found}", found.Controller);
 
-                    // Remembered so the next connect opens this port at this
-                    // speed directly instead of sweeping again. A sweep runs
-                    // into tens of seconds, which is longer than some clients
-                    // wait before abandoning the connection, and every retry
-                    // they make then pays for a fresh sweep, so a mount that is
-                    // genuinely there never gets connected.
-                    bool changed = connection.PortName != found.Controller.PortName
-                        || connection.BaudRate != found.Controller.BaudRate;
-
-                    connection.PortName = found.Controller.PortName;
-                    connection.BaudRate = found.Controller.BaudRate;
-
-                    if (changed)
-                    {
-                        // Worth persisting, not just holding in memory: the
-                        // whole point is that the slow first connect happens
-                        // once, and a restart would otherwise pay for it again.
-                        PortRemembered?.Invoke();
-                    }
+                    Remember(connection, found.Controller);
 
                     // Deliberately the port autodiscovery already has open. Closing
                     // it and reopening pulses DTR and RTS, which resets the boards
